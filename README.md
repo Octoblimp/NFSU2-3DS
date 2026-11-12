@@ -22,8 +22,8 @@ Local Wireless races up to six New 3DS consoles against each other.
 - A **New 3DS, New 3DS XL or New 2DS XL** with custom firmware (Luma3DS)
   and FBI. An Old 3DS or 2DS can't run it: it has too little memory and too
   little speed.
-- The 3DS's **DSP firmware** dumped to `sdmc:/3ds/dspfirm.cdc`, for the
-  sound. From the Rosalina menu (L + D-Pad Down + SELECT): Miscellaneous
+- The 3DS's **DSP firmware** dumped to `sdmc:/3ds/dspfirm.cdc` (or `sdmc:/dspfirm.cdc` if
+  using CIA version), for the sound. From the Rosalina menu (L + D-Pad Down + SELECT): Miscellaneous
   options > Dump DSP firmware.
 - **Your own PC copy** of Need for Speed: Underground 2, installed (the
   folder `SPEED2.EXE` is in).
