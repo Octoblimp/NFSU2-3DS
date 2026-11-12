@@ -1,0 +1,76 @@
+; Lit, textured vertex shader for the real NFSU2 car meshes packed by
+; tools/car_pack.py (CARS/<car>/GEOMETRY.BIN -> .nfsc).
+;
+; The car FVF carries a real per-vertex normal but its D3DCOLOR slot is a
+; constant 0xFF000000 across every vertex of every part (checked on 240SX
+; BASE/BODY/BRAKELIGHT), i.e. there is no baked vertex shading to reuse -- so
+; lighting has to be computed here. Diffuse-only Lambert against a single
+; directional light, evaluated per vertex and interpolated, which is what the
+; PICA200 can do for free in the vertex stage; the fragment stage then just
+; modulates the texture (or, for the untextured "paint" subsets, a constant
+; colour) by this. See car3d.c for the matrix/uniform setup.
+;
+; CPU side precomputes:
+;   mvp        - projection * view * model, one combined 4x4
+;   normalMtx  - the rotation-only model->view 3x3 (uploaded as 3x4). No scale
+;                is folded in, so transformed normals stay unit length and no
+;                renormalise is needed here.
+;   lightDir   - view-space light direction, pre-normalised
+;   shade      - x = ambient floor, y = diffuse scale
+
+.fvec mvp[4]
+.fvec normalMtx[3]
+.fvec lightDir
+.fvec shade
+
+.constf myconst(0.0, 1.0, -1.0, 0.5)
+.alias  zeros myconst.xxxx
+.alias  ones  myconst.yyyy
+
+.out outpos position
+.out outtc0 texcoord0
+.out outclr color
+
+.alias inpos v0
+.alias innrm v1
+.alias intex v2
+
+.proc main_car
+	; Position -> clip space.
+	mov r0.xyz, inpos
+	mov r0.w,   ones
+
+	dp4 r1.x, mvp[0], r0
+	dp4 r1.y, mvp[1], r0
+	dp4 r1.z, mvp[2], r0
+	dp4 r1.w, mvp[3], r0
+	mov outpos, r1
+
+	; Normal -> view space.
+	mov r2.xyz, innrm
+	mov r2.w,   zeros
+	dp3 r3.x, normalMtx[0], r2
+	dp3 r3.y, normalMtx[1], r2
+	dp3 r3.z, normalMtx[2], r2
+	mov r3.w, zeros
+
+	; shade = ambient + diffuse * max(0, N.L)
+	; Source order matters on the PICA200: an arithmetic op takes at most one
+	; uniform register, and for dp3 it has to be src1 -- hence lightDir first.
+	; For the same reason `shade` is copied into a temporary before mad, which
+	; would otherwise be reading the same uniform as two of its three sources.
+	dp3 r4, lightDir, r3
+	max r4, zeros, r4
+	mov r6, shade
+	mad r5, r4, r6.yyyy, r6.xxxx
+
+	mov outclr.xyz, r5
+	mov outclr.w,   ones
+	mov outtc0, intex
+
+	end
+.end
+
+; #352: one of the shared worldsh blob's programs (shaders.h); its
+; main has the file's name so the blob can hold them all.
+.entry main_car

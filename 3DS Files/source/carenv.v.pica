@@ -1,0 +1,120 @@
+; The in-world car's reflection (TASKS.md #166, #309): carsh.v.pica's `envp`
+; pass as a program of its own, straight through with no flow control and
+; each output written once.
+;
+; In carsh it was an `ifu envp` block inside the `ifu gloss` one. On the 3DS
+; the GPU never finished a list that took that inner branch -- with texture
+; units 1 and 3 off as well -- and Azahar ran it. The same instructions
+; without the branches are what follows.
+;
+; The declarations up to the outputs are carsh.v.pica's, in its order, so
+; picasso gives every uniform and constant the same register: the uniforms
+; model3d.c sets for carsh are already in place when this program draws, and
+; its constants load the values carsh's own put there.
+;
+; out.rgb = 2 CLR0.a lerp(K0, K1, d^Pe)       stored
+; out.a   = CLR0.a                            stored, as the gloss pass has it
+; texcoord1 = 0.5 n + 0.5, n the normal through TEXMTX1, normalized
+;
+; PORT (#312): the reflection's strength is SPEED2.EXE's. Its car material
+; setter (0x5bd4a0) uploads EnvmapMin = K0 / 2 and EnvmapRange = (K1 - K0) / 2,
+; and car_fixed_envmap's ps_1_1 (file 0x43b0a8) adds
+;   2 (2 tex.a D.a) 2 cube(R) (EnvmapMin + EnvmapRange d^Pe),  D.a = CLR0.a / 2,
+; which is 2 tex.a CLR0.a lerp(K0, K1, d^Pe) cube(R). The GameCube's
+; (ps_Model mode 7) is half that, with lerp(K1, K0, 2 F(Pe)) for the lerp.
+; The sphere map at the normal stays the GameCube's.
+;
+; See carsh.v.pica for the terms; model3d.c drawEnv() for the combiner.
+
+.fvec mvp[4]
+.fvec sh[10]
+.fvec eye
+.fvec matD0
+.fvec matD1
+.fvec matS0
+.fvec matS1
+.fvec matP
+.fvec envm[3]
+.fvec envk0
+.fvec envk1
+.bool gloss
+
+.constf kc(0.0, 1.0, 0.5, 0.50196078)
+.constf kl(0.6666667, 0.4, 0.2857143, 0.01)
+.constf kf(0.00259, 0.03126, 0.25, 1.0)
+.alias  zeros kc.xxxx
+.alias  ones  kc.yyyy
+
+.out outpos position
+.out outtc0 texcoord0
+.out outtc1 texcoord1
+.out outclr color
+
+.alias inpos v0
+.alias innrm v1
+.alias intex v2
+
+.proc main_carenv
+	mov r0.xyz, inpos
+	mov r0.w,   ones
+	dp4 r15.x, mvp[0], r0
+	dp4 r15.y, mvp[1], r0
+	dp4 r15.z, mvp[2], r0
+	dp4 r15.w, mvp[3], r0
+	mov outpos, r15
+	mov outtc0, intex
+
+	; N, and V = normalize(eye - P); d = max(N.V, 0.01) in all four, as
+	; carsh has it.
+	mov r1.xyz, innrm
+	mov r1.w,   zeros
+	add r2, eye, -r0
+	dp3 r3, r2, r2
+	rsq r3, r3.x
+	mul r2, r2, r3
+	dp3 r3, r1, r2
+	mov r7, kl
+	max r3, r7.wwww, r3
+	; (DiffMin + DiffRange d, MinA + RangeA d)
+	mov r5, matD0
+	mad r5, r3, matD1, r5
+
+	; d^Pe in all four.
+	lg2 r8, r3.x
+	mul r9, matP, r8
+	ex2 r12, r9.y
+
+	; CLR0.a, stored.
+	mul r5, kc.wwww, r5
+	max r5, zeros, r5
+	min r5, ones, r5
+	; env = K0 + (K1 - K0) d^Pe, then times 2 CLR0.a.
+	mov r8, envk1
+	mov r9, envk0
+	add r8, r8, -r9
+	mad r8, r8, r12, r9
+	add r8, r8, r8
+	mul r6.xyz, r5.wwww, r8
+	mov r6.w,   r5.w
+	max r6, zeros, r6
+	min r6, ones, r6
+	mov outclr, r6
+
+	; TexCoordGen2(1, MTX3x4, NRM, TEXMTX1, normalize) and then g_m2:
+	; s = 0.5 n.x + 0.5 and t = 0.5 n.y + 0.5, the PICA200's t running up
+	; where the GameCube's runs down.
+	dp3 r10.x, envm[0], r1
+	dp3 r10.y, envm[1], r1
+	dp3 r10.z, envm[2], r1
+	dp3 r11, r10, r10
+	rsq r11, r11.x
+	mul r10, r10, r11
+	mov r11, kc.zzzz
+	mad r10, r10, r11, r11
+	mov outtc1, r10
+	end
+.end
+
+; #352: one of the shared worldsh blob's programs (shaders.h); its
+; main has the file's name so the blob can hold them all.
+.entry main_carenv

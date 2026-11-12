@@ -1,0 +1,192 @@
+== resources ==
+== 190 widgets, far-to-near ==
+4   Image  guid=939296   par=939295   w=(   85.5,  206.0,  586.5) sz=385x32      col=(255, 255, 255, 150) fl=40000000 tex=0xa67c3fe2 ridx=2
+5   Image  guid=939297   par=939295   w=( -193.5,  206.0,  586.5) sz=167x32      col=(128, 128, 128, 215) fl=40000000 tex=0xa67c3fe2 ridx=2
+3   5      guid=939295   par=939292   w=(  -33.1,  206.0,  400.0) sz=1x1         col=(255, 255, 255, 255) fl=40000040 
+106 5      guid=913030   par=913028   w=(   -0.7, -163.3,  283.0) sz=1x1         col=(255, 255, 255, 215) fl=40000000 
+107 Image  guid=913031   par=913030   w=( -289.7, -216.3,  283.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e1208df ridx=12
+108 Image  guid=913032   par=913030   w=( -289.7,  -18.3,  283.0) sz=16x380      col=(255, 255, 255, 255) fl=40000000 tex=0x894389e ridx=2
+109 Image  guid=913033   par=913030   w=(   -0.7,  -18.3,  283.0) sz=562x412     col=(255, 255, 255, 255) fl=40000000 tex=0xa67c3fe2 ridx=2
+110 Image  guid=913034   par=913030   w=(  288.3,  179.7,  283.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0xa570002 ridx=12
+111 Image  guid=913035   par=913030   w=(  288.3,  -18.3,  283.0) sz=16x380      col=(255, 255, 255, 255) fl=40000000 tex=0xa67c3fe2 ridx=2
+112 Image  guid=913036   par=913030   w=(  288.3, -216.3,  283.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e11fbfb ridx=12
+113 Image  guid=913037   par=913030   w=( -289.7,  179.7,  283.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e12089d ridx=12
+115 Image  guid=913042   par=913038   w=(   -2.0,   22.0,  253.0) sz=552x318     col=(225, 225, 225, 255) fl=40000000 tex=0xa67c3fe2 ridx=2
+116 Image  guid=913043   par=913038   w=(  282.0,  173.0,  253.0) sz=16x16       col=(225, 225, 225, 255) fl=40000000 tex=0xa570002 ridx=12
+117 Image  guid=913044   par=913038   w=(  282.0,   22.0,  253.0) sz=16x286      col=(225, 225, 225, 255) fl=40000000 tex=0xa67c3fe2 ridx=2
+118 Image  guid=913045   par=913038   w=(  282.0, -129.0,  253.0) sz=16x16       col=(225, 225, 225, 255) fl=40000000 tex=0x5e11fbfb ridx=12
+141 Image  guid=943632   par=943631   w=(  167.0,   22.0,  243.0) sz=202x310     col=(225, 225, 225, 255) fl=40000000 tex=0xa67c3fe2 ridx=17
+142 Image  guid=943633   par=943631   w=(  276.0,  169.0,  243.0) sz=16x16       col=(225, 225, 225, 255) fl=40000000 tex=0xa570002 ridx=18
+143 Image  guid=943634   par=943631   w=(  276.0,   22.0,  243.0) sz=16x278      col=(225, 225, 225, 255) fl=40000000 tex=0xa67c3fe2 ridx=17
+144 Image  guid=943635   par=943631   w=(  276.0, -125.0,  243.0) sz=16x16       col=(225, 225, 225, 255) fl=40000000 tex=0x5e11fbfb ridx=18
+6   Image  guid=939298   par=939295   w=( -293.0,  206.0,  213.5) sz=32x32       col=(255, 255, 255, 215) fl=40000000 tex=0xc8c5f8a6 ridx=3
+7   Image  guid=939299   par=939295   w=(  294.0,  206.0,  213.5) sz=32x32       col=(255, 255, 255, 150) fl=40000000 tex=0xc8c5f8a6 ridx=3
+123 Image  guid=913233   par=913229   w=(   -1.0, -161.0,  189.0) sz=531x39      col=(255, 255, 255, 255) fl=40000000 tex=0x688a1551 ridx=13
+149 Image  guid=944024   par=944020   w=(  175.0,  -85.0,  173.0) sz=174x38      col=(255, 255, 255, 255) fl=40000000 tex=0xa67c3fe2 ridx=13
+157 Image  guid=944198   par=944194   w=(  176.0,   -6.0,  173.0) sz=174x38      col=(255, 255, 255, 255) fl=40000000 tex=0xa67c3fe2 ridx=13
+165 Image  guid=944216   par=944212   w=(  176.0,   73.0,  173.0) sz=174x38      col=(255, 255, 255, 255) fl=40000000 tex=0xa67c3fe2 ridx=13
+173 Image  guid=944234   par=944230   w=(  176.0,  152.0,  173.0) sz=174x38      col=(255, 255, 255, 255) fl=40000000 tex=0xa67c3fe2 ridx=13
+119 Image  guid=942643   par=913038   w=( -286.0, -129.0,  170.0) sz=16x16       col=(225, 225, 225, 255) fl=40000000 tex=0x5e121161 ridx=12
+120 Image  guid=942689   par=913038   w=( -286.0,   22.0,  170.0) sz=16x286      col=(225, 225, 225, 255) fl=40000000 tex=0xa67c3fe2 ridx=2
+121 Image  guid=942631   par=913038   w=( -286.0,  173.0,  170.0) sz=16x16       col=(225, 225, 225, 255) fl=40000000 tex=0xa570002 ridx=12
+146 Image  guid=944021   par=944020   w=(   80.0,  -96.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e1208df ridx=19
+147 Image  guid=944022   par=944020   w=(   80.0,  -85.0,  163.0) sz=16x6        col=(255, 255, 255, 255) fl=40000000 tex=0x894389e ridx=13
+148 Image  guid=944023   par=944020   w=(   80.0,  -74.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e12089d ridx=19
+150 Image  guid=944025   par=944020   w=(  270.0,  -74.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0xa570002 ridx=19
+151 Image  guid=944026   par=944020   w=(  270.0,  -85.0,  163.0) sz=16x6        col=(255, 255, 255, 255) fl=40000000 tex=0xa67c3fe2 ridx=13
+152 Image  guid=944027   par=944020   w=(  270.0,  -96.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e11fbfb ridx=19
+154 Image  guid=944195   par=944194   w=(   81.0,  -17.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e1208df ridx=19
+155 Image  guid=944196   par=944194   w=(   81.0,   -6.0,  163.0) sz=16x6        col=(255, 255, 255, 255) fl=40000000 tex=0x894389e ridx=13
+156 Image  guid=944197   par=944194   w=(   81.0,    5.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e12089d ridx=19
+158 Image  guid=944199   par=944194   w=(  271.0,    5.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0xa570002 ridx=19
+159 Image  guid=944200   par=944194   w=(  271.0,   -6.0,  163.0) sz=16x6        col=(255, 255, 255, 255) fl=40000000 tex=0xa67c3fe2 ridx=13
+160 Image  guid=944201   par=944194   w=(  271.0,  -17.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e11fbfb ridx=19
+162 Image  guid=944213   par=944212   w=(   81.0,   62.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e1208df ridx=19
+163 Image  guid=944214   par=944212   w=(   81.0,   73.0,  163.0) sz=16x6        col=(255, 255, 255, 255) fl=40000000 tex=0x894389e ridx=13
+164 Image  guid=944215   par=944212   w=(   81.0,   84.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e12089d ridx=19
+166 Image  guid=944217   par=944212   w=(  271.0,   84.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0xa570002 ridx=19
+167 Image  guid=944218   par=944212   w=(  271.0,   73.0,  163.0) sz=16x6        col=(255, 255, 255, 255) fl=40000000 tex=0xa67c3fe2 ridx=13
+168 Image  guid=944219   par=944212   w=(  271.0,   62.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e11fbfb ridx=19
+170 Image  guid=944231   par=944230   w=(   81.0,  141.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e1208df ridx=19
+171 Image  guid=944232   par=944230   w=(   81.0,  152.0,  163.0) sz=16x6        col=(255, 255, 255, 255) fl=40000000 tex=0x894389e ridx=13
+172 Image  guid=944233   par=944230   w=(   81.0,  163.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e12089d ridx=19
+174 Image  guid=944235   par=944230   w=(  271.0,  163.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0xa570002 ridx=19
+175 Image  guid=944236   par=944230   w=(  271.0,  152.0,  163.0) sz=16x6        col=(255, 255, 255, 255) fl=40000000 tex=0xa67c3fe2 ridx=13
+176 Image  guid=944237   par=944230   w=(  271.0,  141.0,  163.0) sz=16x16       col=(255, 255, 255, 255) fl=40000000 tex=0x5e11fbfb ridx=19
+114 5      guid=913038   par=913028   w=(  270.0, -146.0,  153.0) sz=1x1         col=(255, 255, 255, 200) fl=40000000 
+140 5      guid=943631   par=913028   w=(  -20.0,  102.0,  143.0) sz=1x1         col=(255, 255, 255, 150) fl=40000000 
+9   String guid=939301   par=939292   w=(  211.7,  205.0,  130.0) sz=1x1         col=(255, 255, 255, 255) fl=40000044 font[1]=? Sj=4 Sw=0 Sb=22 SH=0x600100e1 '$JOY_EVENT_FENG_HELP$'
+12  Image  guid=937642   par=None     w=( -179.0,  693.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+13  Image  guid=937641   par=None     w=( -179.0,  673.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+14  Image  guid=937640   par=None     w=( -179.0,  653.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+15  Image  guid=937639   par=None     w=( -179.0,  633.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+16  Image  guid=937638   par=None     w=( -179.0,  613.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+17  Image  guid=937637   par=None     w=( -179.0,  593.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+18  Image  guid=937636   par=None     w=( -179.0,  573.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+19  Image  guid=937635   par=None     w=( -179.0,  553.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+20  Image  guid=937634   par=None     w=( -179.0,  533.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+21  Image  guid=937633   par=None     w=( -179.0,  513.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+22  Image  guid=937622   par=None     w=( -222.0,  692.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+23  Image  guid=937621   par=None     w=( -222.0,  672.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+24  Image  guid=937620   par=None     w=( -222.0,  652.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+25  Image  guid=937619   par=None     w=( -222.0,  632.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+26  Image  guid=937618   par=None     w=( -222.0,  612.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+27  Image  guid=937617   par=None     w=( -222.0,  592.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+28  Image  guid=937616   par=None     w=( -222.0,  572.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+29  Image  guid=937615   par=None     w=( -222.0,  552.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+30  Image  guid=937614   par=None     w=( -222.0,  532.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+31  Image  guid=937613   par=None     w=( -222.0,  512.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+32  Image  guid=937612   par=None     w=( -202.0,  692.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+33  Image  guid=937611   par=None     w=( -202.0,  672.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+34  Image  guid=937610   par=None     w=( -202.0,  652.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+35  Image  guid=937609   par=None     w=( -202.0,  632.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+36  Image  guid=937608   par=None     w=( -202.0,  612.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+37  Image  guid=937607   par=None     w=( -202.0,  592.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+38  Image  guid=937606   par=None     w=( -202.0,  572.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+39  Image  guid=937605   par=None     w=( -202.0,  552.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+40  Image  guid=937604   par=None     w=( -202.0,  532.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+41  Image  guid=937603   par=None     w=( -202.0,  512.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+43  Image  guid=931912   par=None     w=( -242.0,  691.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+44  Image  guid=931911   par=None     w=( -242.0,  671.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+45  Image  guid=931910   par=None     w=( -242.0,  651.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+46  Image  guid=931909   par=None     w=( -242.0,  631.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+47  Image  guid=931908   par=None     w=( -242.0,  611.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+48  Image  guid=931907   par=None     w=( -242.0,  591.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+49  Image  guid=931906   par=None     w=( -242.0,  571.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+50  Image  guid=931905   par=None     w=( -242.0,  551.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+51  Image  guid=931904   par=None     w=( -242.0,  531.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+52  Image  guid=931903   par=None     w=( -242.0,  511.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+53  Image  guid=931888   par=None     w=( -283.0,  691.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+54  Image  guid=931887   par=None     w=( -283.0,  671.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+55  Image  guid=931886   par=None     w=( -283.0,  651.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+56  Image  guid=931885   par=None     w=( -283.0,  631.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+57  Image  guid=931884   par=None     w=( -283.0,  611.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+58  Image  guid=931883   par=None     w=( -283.0,  591.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+59  Image  guid=931882   par=None     w=( -283.0,  571.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+60  Image  guid=931881   par=None     w=( -283.0,  551.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+61  Image  guid=931880   par=None     w=( -283.0,  531.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+62  Image  guid=931879   par=None     w=( -283.0,  511.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+63  Image  guid=931878   par=None     w=( -263.0,  691.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+64  Image  guid=931877   par=None     w=( -263.0,  671.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+65  Image  guid=931876   par=None     w=( -263.0,  651.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+66  Image  guid=931875   par=None     w=( -263.0,  631.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+67  Image  guid=931874   par=None     w=( -263.0,  611.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+68  Image  guid=931873   par=None     w=( -263.0,  591.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+69  Image  guid=931872   par=None     w=( -263.0,  571.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+70  Image  guid=931871   par=None     w=( -263.0,  551.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+71  Image  guid=931870   par=None     w=( -263.0,  531.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+72  Image  guid=931869   par=None     w=( -263.0,  511.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+73  Image  guid=930451   par=None     w=( -326.0,  690.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+74  Image  guid=930450   par=None     w=( -326.0,  670.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+75  Image  guid=930449   par=None     w=( -326.0,  650.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+76  Image  guid=930448   par=None     w=( -326.0,  630.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+77  Image  guid=930447   par=None     w=( -326.0,  610.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+78  Image  guid=930446   par=None     w=( -326.0,  590.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+79  Image  guid=930445   par=None     w=( -326.0,  570.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+80  Image  guid=930444   par=None     w=( -326.0,  550.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+81  Image  guid=930443   par=None     w=( -326.0,  530.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+82  Image  guid=930442   par=None     w=( -326.0,  510.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+83  Image  guid=930421   par=None     w=( -306.0,  690.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+84  Image  guid=930414   par=None     w=( -306.0,  670.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+85  Image  guid=930408   par=None     w=( -306.0,  650.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+86  Image  guid=930402   par=None     w=( -306.0,  630.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+87  Image  guid=930396   par=None     w=( -306.0,  610.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+88  Image  guid=930390   par=None     w=( -306.0,  590.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+89  Image  guid=930384   par=None     w=( -306.0,  570.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+90  Image  guid=930378   par=None     w=( -306.0,  550.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+91  Image  guid=930373   par=None     w=( -306.0,  530.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+92  Image  guid=930110   par=None     w=( -306.0,  510.0,  130.0) sz=16x16       col=(255, 255, 255, 180) fl=40000000 tex=0xa334a7bc ridx=4
+145 5      guid=944020   par=913028   w=(   80.0,  -43.0,  123.0) sz=1x1         col=(255, 255, 255, 215) fl=40000000 
+153 5      guid=944194   par=913028   w=(   80.0,   36.0,  123.0) sz=1x1         col=(255, 255, 255, 215) fl=40000000 
+161 5      guid=944212   par=913028   w=(   80.0,  115.0,  123.0) sz=1x1         col=(255, 255, 255, 215) fl=40000000 
+169 5      guid=944230   par=913028   w=(   80.0,  194.0,  123.0) sz=1x1         col=(255, 255, 255, 215) fl=40000000 
+8   String guid=939300   par=939292   w=(  241.7,  205.5,  120.0) sz=1x1         col=(192, 192, 192, 255) fl=40000044 font[1]=? Sj=4 Sw=0 Sb=22 SH=0x53fcafe5 'Help'
+0   5      guid=939292   par=None     w=( -148.3,  206.0,  100.0) sz=1x1         col=(255, 255, 255, 255) fl=40000040 
+103 String guid=913198   par=None     w=(  161.0, -326.0,  100.0) sz=1x1         col=(0, 0, 255, 255)     fl=40000000 font[1]=? Sj=0 Sw=0 Sb=15 SH=0xf1414fde 'Event Handler'
+124 Image  guid=913428   par=913229   w=(  284.0, -161.0,  100.0) sz=39x39       col=(255, 255, 255, 255) fl=40000000 tex=0x2eff7515 ridx=14
+187 Image  guid=899343   par=None     w=(  -11.8,   12.0,  100.0) sz=538x231     col=(128, 128, 128, 0)   fl=40000000 tex=0xe57a81a6 ridx=0
+188 Image  guid=899335   par=None     w=(  -11.8,   12.0,  100.0) sz=546x238     col=(64, 64, 64, 0)      fl=40000000 tex=0x1e948cd4 ridx=0
+105 String guid=913029   par=913028   w=( -289.7, -218.3,   99.6) sz=1x1         col=(138, 244, 204, 255) fl=40000000 font[1]=? Sj=0 Sw=0 Sb=24 SH=0xa0c6ae56 'World Map'
+125 Image  guid=913473   par=913229   w=( -286.0, -161.0,   90.0) sz=39x39       col=(255, 255, 255, 255) fl=40000000 tex=0x2eff7514 ridx=14
+122 5      guid=913229   par=913028   w=(   -1.0, -145.0,   89.0) sz=1x1         col=(255, 255, 255, 255) fl=40000000 
+104 5      guid=913028   par=None     w=(  -42.0, -157.0,   83.0) sz=1x1         col=(255, 255, 255, 255) fl=40000000 
+133 Image  guid=930074   par=930073   w=( -189.0,  -54.0,   21.0) sz=272x28      col=(225, 225, 225, 255) fl=40000000 tex=0xa67c3fe2 ridx=8
+134 Image  guid=930075   par=930073   w=(  -39.0,  -54.0,   21.0) sz=28x28       col=(225, 225, 225, 255) fl=40000000 tex=0xc18c81a6 ridx=15
+135 Image  guid=930076   par=930073   w=( -339.0,  -54.0,   21.0) sz=28x28       col=(225, 225, 225, 255) fl=40000000 tex=0xc18c81a6 ridx=15
+132 5      guid=930073   par=913028   w=( -265.0,  -54.0,   20.0) sz=1x1         col=(255, 255, 255, 200) fl=40000000 
+136 Image  guid=930064   par=913028   w=( -286.0,  171.0,   14.0) sz=8x8         col=(225, 225, 225, 200) fl=40000000 tex=0x75b1dcbd ridx=16
+99  Image  guid=930066   par=None     w=( -264.0,   24.0,   10.0) sz=32x32       col=(255, 255, 255, 120) fl=40000004 tex=0xd82b4a08 ridx=9
+189 String guid=899305   par=None     w=(    0.0, -162.0,   10.0) sz=1x1         col=(138, 244, 202, 255) fl=50080000 font[1]=? Sj=5 Sw=0 Sb=30 SH=0x9588bd38 'Region 1'
+137 Image  guid=930065   par=913028   w=( -286.0, -127.0,    9.0) sz=8x8         col=(225, 225, 225, 200) fl=40000000 tex=0x75b1dcbc ridx=16
+1   String guid=939293   par=939292   w=( -206.0,  207.0,    4.8) sz=1x1         col=(230, 230, 230, 255) fl=40000004 font[1]=? Sj=5 Sw=0 Sb=23 SH=0x9588bd38 'PLAYER NAME'
+2   String guid=939294   par=939292   w=( -206.0,  207.0,    4.8) sz=1x1         col=(230, 230, 230, 255) fl=40000004 font[1]=? Sj=5 Sw=0 Sb=17 SH=0x9588bd38 '$999999999'
+98  Image  guid=930067   par=None     w=( -286.0,   22.0,    2.0) sz=8x290       col=(225, 225, 225, 200) fl=40000004 tex=0x884fba76 ridx=8
+177 Image  guid=939349   par=913028   w=(  -91.0,   22.0,    2.0) sz=309x309     col=(255, 255, 255, 200) fl=40000000 tex=0xffc8509e ridx=20
+10  String guid=944887   par=939292   w=(  -99.3,  205.0,    1.0) sz=1x1         col=(255, 255, 255, 255) fl=40000040 font[1]=? Sj=4 Sw=0 Sb=25 SH=0xb2ffe018 '$JOY_EVENT_FENG_SELECT$'
+11  String guid=944886   par=939292   w=(  -69.3,  205.5,    1.0) sz=1x1         col=(192, 192, 192, 255) fl=40000040 font[1]=? Sj=4 Sw=0 Sb=22 SH=0xdaac95f9 'Select Event'
+42  Image  guid=932849   par=None     w=( -221.0, -414.0,    1.0) sz=16x16       col=(0, 0, 0, 150)       fl=40000004 tex=0x3fbb7a4e ridx=5
+93  Image  guid=930072   par=None     w=( -265.0,  162.0,    1.0) sz=22x22       col=(255, 255, 255, 150) fl=40000004 tex=0x640f0f23 ridx=6
+94  Image  guid=930071   par=None     w=( -264.0,   24.0,    1.0) sz=16x16       col=(255, 255, 255, 180) fl=40000004 tex=0x38e39ad7 ridx=4
+95  Image  guid=930070   par=None     w=( -265.0, -117.0,    1.0) sz=22x22       col=(255, 255, 255, 150) fl=40000004 tex=0x640f0f22 ridx=6
+96  Image  guid=930069   par=None     w=( -286.0,  -77.0,    1.0) sz=16x16       col=(255, 255, 255, 150) fl=40000004 tex=0xf31e8ed3 ridx=5
+97  Image  guid=930068   par=None     w=( -264.0,   24.0,    1.0) sz=32x32       col=(138, 244, 202, 255) fl=40000000 tex=0xda3c4771 ridx=7
+100 Image  guid=927022   par=None     w=(  -91.0,   22.0,    1.0) sz=309x309     col=(253, 255, 255, 255) fl=40000000 tex=0x90fe80f3 ridx=10
+101 Image  guid=913764   par=None     w=(  269.0, -161.0,    1.0) sz=26x26       col=(255, 255, 255, 150) fl=40000000 tex=0x444969fe ridx=11
+102 Image  guid=913763   par=None     w=( -271.0, -161.0,    1.0) sz=26x26       col=(255, 255, 255, 150) fl=40000000 tex=0x444969fd ridx=11
+126 String guid=927196   par=913028   w=(   77.0,  108.0,    1.0) sz=1x1         col=(255, 255, 255, 255) fl=40000000 font[1]=? Sj=0 Sw=0 Sb=200 SH=0x9588bd38 'Previous Time:'
+127 String guid=927197   par=913028   w=(   77.0,   29.0,    1.0) sz=1x1         col=(255, 255, 255, 255) fl=40000000 font[1]=? Sj=0 Sw=0 Sb=200 SH=0x9588bd38 'Distance:'
+128 String guid=927198   par=913028   w=(   76.0,  -50.0,    1.0) sz=1x1         col=(255, 255, 255, 255) fl=40000000 font[1]=? Sj=0 Sw=0 Sb=200 SH=0x9588bd38 'Race Type:\n'
+129 String guid=930666   par=913028   w=(   88.0,   -7.0,    1.0) sz=1x1         col=(138, 244, 202, 255) fl=40000000 font[1]=? Sj=4 Sw=0 Sb=200 SH=0x9588bd38 'Sprint\n'
+130 String guid=930757   par=913028   w=(   88.0,   72.0,    1.0) sz=1x1         col=(138, 244, 202, 255) fl=40000000 font[1]=? Sj=4 Sw=0 Sb=200 SH=0x9588bd38 'XXXXX Miles'
+131 String guid=930761   par=913028   w=(   88.0,  151.0,    1.0) sz=1x1         col=(138, 244, 202, 255) fl=40000000 font[1]=? Sj=4 Sw=0 Sb=200 SH=0x9588bd38 '01:30:04'
+138 String guid=931549   par=913028   w=(   88.0,  -87.0,    1.0) sz=1x1         col=(138, 244, 202, 255) fl=40000000 font[1]=? Sj=4 Sw=0 Sb=200 SH=0x9588bd38 'Completed\n'
+139 String guid=931550   par=913028   w=(   74.0, -129.0,    1.0) sz=1x1         col=(255, 255, 255, 255) fl=40000000 font[1]=? Sj=0 Sw=0 Sb=200 SH=0x677ec451 'Race Status:\n'
+178 5      guid=944689   par=913028   w=(    6.0, -187.0,    1.0) sz=1x1         col=(255, 255, 255, 255) fl=40000000 
+179 Image  guid=944690   par=944689   w=(    0.0, -182.0,    1.0) sz=8x560       col=(165, 218, 197, 255) fl=40000000 tex=0x39cc2f66 ridx=21
+180 Image  guid=944691   par=944689   w=( -288.0, -180.0,    1.0) sz=16x16       col=(165, 218, 197, 255) fl=40000000 tex=0xdde4a5e5 ridx=22
+181 Image  guid=944692   par=944689   w=( -289.0, -144.0,    1.0) sz=16x16       col=(165, 218, 197, 255) fl=40000000 tex=0xdde4a5e8 ridx=22
+182 Image  guid=944693   par=944689   w=( -291.0, -162.0,    1.0) sz=8x20        col=(165, 218, 197, 255) fl=40000000 tex=0xbe9ab445 ridx=21
+183 Image  guid=944694   par=944689   w=(   -1.0, -141.0,    1.0) sz=8x560       col=(165, 218, 197, 255) fl=40000000 tex=0x39cc2f45 ridx=21
+184 Image  guid=944695   par=944689   w=(  287.0, -143.0,    1.0) sz=16x16       col=(165, 218, 197, 255) fl=40000000 tex=0xdde4a5e7 ridx=22
+185 Image  guid=944696   par=944689   w=(  290.0, -161.0,    1.0) sz=8x20        col=(165, 218, 197, 255) fl=40000000 tex=0x39cc2f24 ridx=21
+186 Image  guid=944697   par=944689   w=(  288.0, -179.0,    1.0) sz=16x16       col=(165, 218, 197, 255) fl=40000000 tex=0xdde4a5e6 ridx=22

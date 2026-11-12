@@ -1,0 +1,39 @@
+; The car env map's sphere build (envmap.c, TASKS.md #166): one face of the
+; six at a time, laid onto the 128x128 sphere map through the disc mesh
+; envmap.c builds once. Everything is worked out on the CPU, because the
+; sphere map's directions and the faces are both fixed in the env camera's
+; frame: all that is left here is the pass-through. 20-byte vertices:
+;
+;   v0  the disc position, float2, already in clip space (x, y)
+;   v1  float3: the face texture's (s, t) at that direction, and the face's
+;       weight there (the colour's alpha)
+
+.constf myconst(0.0, 1.0, -0.5, 0.0)
+.alias  ones  myconst.yyyy
+
+.out outpos position
+.out outtc0 texcoord0
+.out outclr color
+
+.alias inpos v0
+.alias inmap v1
+
+.proc main_envmap
+	; (x, y, -0.5, 1): inside the PICA200's 0..-w depth range, which nothing
+	; tests -- the sphere map has no depth buffer.
+	mov r0.xy, inpos
+	mov r0.z,  myconst.z
+	mov r0.w,  ones
+	mov outpos, r0
+
+	mov outtc0, inmap
+	mov r1.xyz, ones
+	mov r1.w,   inmap.z
+	mov outclr, r1
+
+	end
+.end
+
+; #352: one of the shared worldsh blob's programs (shaders.h); its
+; main has the file's name so the blob can hold them all.
+.entry main_envmap

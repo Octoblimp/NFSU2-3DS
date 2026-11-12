@@ -1,0 +1,7 @@
+This ffmpeg.exe is an unmodified GPL build (with libx264), used by the apps to
+make the .wav soundtracks and the New 3DS .mvd movies.
+
+ffmpeg version 9.0-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers
+
+Source and build scripts: https://www.gyan.dev/ffmpeg/builds/ and
+https://ffmpeg.org/download.html (its licence is LICENSE beside this file).

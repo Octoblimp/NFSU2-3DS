@@ -1,0 +1,34 @@
+; Minimal unlit textured vertex shader for the NFSU2 POC mesh renderer.
+; CPU side precomputes a single combined model-view-projection matrix and
+; uploads it as the "mvp" uniform, so this shader is a straight transform +
+; texcoord passthrough -- no per-vertex lighting (car/scenery vertex color
+; and normal data isn't used for shading yet, see docs/formats/geometry-bin.md).
+
+.fvec mvp
+
+.constf myconst(0.0, 1.0, -1.0, -0.5)
+.alias  zeros myconst.xxxx
+.alias  ones  myconst.yyyy
+
+.out outpos position
+.out outtc0 texcoord0
+.out outclr color
+
+.alias inpos v0
+.alias intex v1
+
+.proc main
+	mov r0.xyz, inpos
+	mov r0.w,   ones
+
+	dp4 r1.x, mvp[0], r0
+	dp4 r1.y, mvp[1], r0
+	dp4 r1.z, mvp[2], r0
+	dp4 r1.w, mvp[3], r0
+
+	mov outpos, r1
+	mov outtc0, intex
+	mov outclr, ones
+
+	end
+.end

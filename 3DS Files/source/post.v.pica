@@ -1,0 +1,63 @@
+; The frontend's post passes (fe_post.c, TASKS.md #312): SPEED2.EXE's screen
+; filters, each a quad over the whole of its target. 16-byte vertices:
+;
+;   v0  the corner, float2, already in clip space (x, y)
+;   v1  float2: the same corner as 0..1 across the target
+;
+; CPU side precomputes, one per texture unit:
+;   map0..2 - where the corners sample that unit's source, its filter tap
+;             included: uv = v1 * map.xy + map.zw. One map each, not one
+;             shared, since #319: the scene and the glow need not fill the
+;             same part of their buffers.
+
+.fvec map0
+.fvec map1
+.fvec map2
+
+.constf myconst(0.0, 1.0, -0.5, 0.0)
+.alias  zeros myconst.xxxx
+.alias  ones  myconst.yyyy
+
+.out outpos position
+.out outtc0 texcoord0
+.out outtc1 texcoord1
+.out outtc2 texcoord2
+.out outclr color
+
+.alias inpos v0
+.alias inuv  v1
+
+.proc main_post
+	; (x, y, -0.5, 1): inside the PICA200's 0..-w depth range. The composite
+	; writes it with C3D_DepthMap's zero scale, which makes it 0 whatever z
+	; is: the clear the 2D after it expects.
+	mov r0.xy, inpos
+	mov r0.z,  myconst.z
+	mov r0.w,  ones
+	mov outpos, r0
+
+	; Each uniform through a temporary, as car.v.pica documents: an
+	; arithmetic op reads at most one uniform.
+	mov r1, map0
+	mov r2, zeros
+	mad r2.xy, inuv, r1.xy, r1.zw
+	mov outtc0, r2
+
+	mov r1, map1
+	mov r2, zeros
+	mad r2.xy, inuv, r1.xy, r1.zw
+	mov outtc1, r2
+
+	mov r1, map2
+	mov r2, zeros
+	mad r2.xy, inuv, r1.xy, r1.zw
+	mov outtc2, r2
+
+	mov outclr, ones
+
+	end
+.end
+
+; #352: one of the shared worldsh blob's programs (shaders.h); its
+; main has the file's name so the blob can hold them all.
+.entry main_post

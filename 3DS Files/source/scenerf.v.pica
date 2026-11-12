@@ -1,0 +1,100 @@
+; scene.v.pica for the reflective world batches (TASKS.md #296): the wet road,
+; sub-mesh flag 0x40, which eDataRender::Render draws with ps_Model(2) and the
+; reflection view's capture on texture map 1 through texture matrix 0x24 --
+; the screen position the vertex projects to.
+;
+;   oT0 = (0.5 (x + w), 0.5 (y + w)), w    the capture, projective
+;   oT1 = uv + uvoff                       the diffuse
+;
+; The capture is drawn through the same view-projection as the batch (the
+; player's camera), so a pixel's own place on screen is where its reflection
+; was drawn: s = (x / w + 1) / 2 and t = (y / w + 1) / 2, the render target's
+; texel there. Texture unit 0 is in projection mode (reflection.c makes the
+; capture GPU_TEX_PROJECTION) and divides by texcoord0w itself, which rides
+; in texcoord0's spare third component; every output register is written
+; whole, each component once (scenehl.v.pica says why, #327).
+;
+; The position and the colour are scene.v.pica's, op for op, so a second pass
+; over a batch drawn with either program lands on the same depths.
+;
+; CPU side: mvp, shade, uvoff -- scene.v.pica's, declared first in the same
+; order so they sit in the same registers and survive a switch of programs.
+
+.fvec mvp[4]
+.fvec shade
+.fvec uvoff
+; posoff - a whole-metre point near the camera, subtracted from the position
+;            before the matrix (TASKS.md #376-#378, #382, #387), which has it
+;            folded in on the CPU; zero for everything but the world's
+;            sections. The PICA200's shader floats have a 16-bit mantissa, and
+;            a section's vertices sit a kilometre out in world space: dp4 over
+;            those cancels its big terms to about a centimetre of depth, and the
+;            rounding moves with the camera, so surfaces a few centimetres
+;            apart -- a decal on the ground, a door over its interior -- took
+;            turns in front frame to frame on the 3DS (the emulator's floats
+;            are 32-bit and never showed it). Whole metres are exact in those
+;            floats, so the subtraction is exact and the dp4 works on small
+;            numbers.
+.fvec posoff
+
+.constf myconst(0.0, 1.0, -1.0, 0.5)
+.constf tonec(0.000001, 0.0, 0.0, 0.0)
+.alias  zeros myconst.xxxx
+.alias  ones  myconst.yyyy
+.alias  half  myconst.wwww
+.alias  tiny  tonec.xxxx
+
+.out outpos position
+.out outtc0 texcoord0.st
+.out -      texcoord0w outtc0.p
+.out outtc1 texcoord1
+.out outclr color
+
+.alias inpos v0
+.alias inclr v1
+.alias intex v2
+
+.proc main_scenerf
+	; Position -> clip space.
+	add r0.xyz, -posoff, inpos
+	mov r0.w,   ones
+
+	dp4 r1.x, mvp[0], r0
+	dp4 r1.y, mvp[1], r0
+	dp4 r1.z, mvp[2], r0
+	dp4 r1.w, mvp[3], r0
+	mov outpos, r1
+
+	; The capture's (s w, t w) and w, the register whole and written once
+	; (scenehl.v.pica says why, #327).
+	add r2.xy, r1.xy, r1.ww
+	mul r2.xy, half, r2.xy
+	mov r2.z, r1.w
+	mov r2.w, zeros
+	mov outtc0, r2
+
+	; scene.v.pica's colour, op for op (see its comments for the why).
+	mov r6, shade
+
+	max r4.xyz, tiny, inclr
+	lg2 r3.x, r4.xxxx
+	lg2 r3.y, r4.yyyy
+	lg2 r3.z, r4.zzzz
+	mul r3.xyz, r3, r6.zzzz
+	ex2 r5.x, r3.xxxx
+	ex2 r5.y, r3.yyyy
+	ex2 r5.z, r3.zzzz
+
+	mad r5.xyz, r5, r6.yyyy, r6.xxxx
+	min r5.xyz, ones, r5
+
+	mov outclr.xyz, r5
+	mov outclr.w,   ones
+	add outtc1, uvoff, intex
+
+	end
+.end
+
+; #352: one of the shared worldsh blob's programs (shaders.h); its
+; main has the file's name so the blob can hold them all.
+.entry main_scenerf

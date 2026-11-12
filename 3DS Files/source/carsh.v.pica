@@ -1,0 +1,179 @@
+; The in-world car's lighting (TASKS.md #166): the GameCube's per-vertex
+; harmonics pass, epCalculateSphericalHarmonicsPOS16 (Speed.elf 0x801e1c90),
+; moved from the CPU into the vertex stage.
+;
+; Retail works out two colours per vertex and its combiner (ps_Model mode 7,
+; 0x801e6d3c) takes both in one draw:
+;
+;   CLR0.rgb = SH(N).rgb * (DiffMin + DiffRange d)       CLR0.a = MinA + RangeA d
+;   CLR1.rgb = SH(R).rgb * (SpecMin + SpecRange F(Ps)) * I
+;   out.rgb  = 2 tex.rgb CLR0.rgb + 4 tex.a CLR0.a CLR1.rgb     (stored units)
+;   out.a    = 2 tex.a CLR0.a
+;
+; with V = normalize(eye - P), d = N.V, R = 2dN - V, every value stored as a
+; byte of sat(v * 128).
+;
+; PORT (#312): the specular is SPEED2.EXE's, car_fixed_envmap's vs_1_1 (file
+; 0x43b264), which is twice the GameCube's: I = pow(sat(SH(R).a), Ps) with no
+; 0.5, F(P) is d^P, and d is floored at 0.01. Ps is the material's times 1.1
+; (the setter at 0x5bda53; model3d.c shSetMaterial). The diffuse is the
+; same on both. The PICA200 has one colour out of the vertex stage, so
+; the port draws a lit batch twice: `gloss` off hands the TEV CLR0 (the batch
+; as it always was, at x2), `gloss` on hands it CLR0.a * CLR1 for an additive
+; tex.a x4 pass on top. The position is worked out by the same instructions
+; either way, so the second pass lands on exactly the depth of the first.
+;
+; CPU side (model3d.c) uploads, all in the car's model space:
+;   mvp          projection * view * model
+;   sh[10]       the light context's ten RGBA coefficients, basis
+;                1, x2, y2, z2, xy, xz, yz, x, y, z (elSetupLights)
+;   eye          ctx+0xc0: 2.78 from the model origin toward the camera
+;                (elSetupEnvMap), w = 1
+;   matD0/matD1  the batch's light material: (DiffMin, MinA), (DiffRange, RangeA)
+;   matS0/matS1  (SpecMin, -), (SpecRange, -)
+;   matP         (SpecPower x 1.1, EnvPower, -, -)
+;   envm[3]      the env map's camera axes (right, up, back) in model space:
+;                TEXMTX1, carWorld x hack_man (elSetupEnvMap 0x800cb054)
+;   envk0/envk1  the material's K0 and K1 (platinfo +0x48/+0x4c) / 255
+;
+; The reflection, the rest of mode 7's S2-S5 (the sphere map at the env-space
+; normal, times lerp(K1, K0, CLR1.a), times A0 = tex.a CLR0.a, at x4; since
+; #312 the PC's lerp(K0, K1, d^Pe) at x8), is carenv.v.pica. It was an `envp` branch inside `gloss` here, and the 3DS GPU
+; hung on it (#309). envm and envk0/envk1 stay declared so that the two
+; programs' registers match; this one does not read them.
+
+.fvec mvp[4]
+.fvec sh[10]
+.fvec eye
+.fvec matD0
+.fvec matD1
+.fvec matS0
+.fvec matS1
+.fvec matP
+.fvec envm[3]
+.fvec envk0
+.fvec envk1
+.bool gloss
+
+; 0, 1, 1/2, and 128/255: a byte of sat(v * 128) read back as a colour.
+.constf kc(0.0, 1.0, 0.5, 0.50196078)
+; The GameCube's l(d) = (2/3)d + 0.4d^2 + (2/7)d^3 (testl1..3, 0x8046e870),
+; and the floor of d and of SH(R).a. Only .w is read now.
+.constf kl(0.6666667, 0.4, 0.2857143, 0.01)
+; The GameCube's F(P) = 1 / (1 + x/4 + 0.03126x^2 + 0.00259x^3)^4 at
+; x = P l(d), highest power first. Unread since #312, kept so that carenv's
+; registers stay the same.
+.constf kf(0.00259, 0.03126, 0.25, 1.0)
+.alias  zeros kc.xxxx
+.alias  ones  kc.yyyy
+
+.out outpos position
+.out outtc0 texcoord0
+.out outtc1 texcoord1
+.out outclr color
+
+.alias inpos v0
+.alias innrm v1
+.alias intex v2
+
+.proc main_carsh
+	mov r0.xyz, inpos
+	mov r0.w,   ones
+	dp4 r15.x, mvp[0], r0
+	dp4 r15.y, mvp[1], r0
+	dp4 r15.z, mvp[2], r0
+	dp4 r15.w, mvp[3], r0
+	mov outpos, r15
+	mov outtc0, intex
+	mov outtc1, zeros
+
+	; N, and V = normalize(eye - P). eye.w and P.w are both 1.
+	mov r1.xyz, innrm
+	mov r1.w,   zeros
+	add r2, eye, -r0
+	dp3 r3, r2, r2
+	rsq r3, r3.x
+	mul r2, r2, r3
+	; d = max(N.V, 0.01), in all four. PORT: car_fixed_envmap's floor (c24.x);
+	; the GameCube takes N.V as it is.
+	dp3 r3, r1, r2
+	mov r7, kl
+	max r3, r7.wwww, r3
+	; (DiffMin + DiffRange d, MinA + RangeA d)
+	mov r5, matD0
+	mad r5, r3, matD1, r5
+
+	ifu gloss
+		; R = 2dN - V
+		add r4, r3, r3
+		mul r4, r4, r1
+		add r4, r4, -r2
+
+		; (d^Ps, d^Pe) in x and y. PORT: car_fixed_envmap's powers, where
+		; the GameCube has its F(Ps), F(Pe).
+		lg2 r8, r3.x
+		mul r9, matP, r8
+		ex2 r12.x, r9.x
+		ex2 r12.y, r9.y
+
+		mov r10, r4
+		call sheval
+
+		; I = pow(clamp(SH(R).a, 0.01, 1), Ps). PORT: the PC's, with no 0.5
+		; (the GameCube's I is half that and floored at 0.01).
+		mov r7, kl
+		max r13, r7.wwww, r11.wwww
+		min r13, ones, r13
+		lg2 r13, r13.x
+		mul r13, matP.xxxx, r13
+		ex2 r13, r13.x
+		min r13, ones, r13
+
+		; CLR1.rgb = SH(R).rgb (SpecMin + SpecRange d^Ps) I, stored.
+		mov r14, matS0
+		mad r14, r12.xxxx, matS1, r14
+		mul r14, r13, r14
+		mul r14, r11, r14
+		mul r14, kc.wwww, r14
+		max r14, zeros, r14
+		min r14, ones, r14
+		; CLR0.a, stored.
+		mul r5, kc.wwww, r5
+		max r5, zeros, r5
+		min r5, ones, r5
+		mul r6.xyz, r5.wwww, r14
+		mov r6.w,   r5.w
+	.else
+		mov r10, r1
+		call sheval
+		; CLR0 = (SH(N).rgb (DiffMin + DiffRange d), MinA + RangeA d), stored.
+		mul r6.xyz, r11.xyz, r5.xyz
+		mov r6.w,   r5.w
+		mul r6, kc.wwww, r6
+		max r6, zeros, r6
+		min r6, ones, r6
+	.end
+
+	mov outclr, r6
+	end
+.end
+
+; SH(n) for the unit vector in r10, RGBA into r11. Uses r8 and r9.
+.proc sheval
+	mul r8, r10, r10
+	mul r9, r10.xxyy, r10.yzzz
+	mov r11, sh[0]
+	mad r11, r8.xxxx, sh[1], r11
+	mad r11, r8.yyyy, sh[2], r11
+	mad r11, r8.zzzz, sh[3], r11
+	mad r11, r9.xxxx, sh[4], r11
+	mad r11, r9.yyyy, sh[5], r11
+	mad r11, r9.zzzz, sh[6], r11
+	mad r11, r10.xxxx, sh[7], r11
+	mad r11, r10.yyyy, sh[8], r11
+	mad r11, r10.zzzz, sh[9], r11
+.end
+
+; #352: one of the shared worldsh blob's programs (shaders.h); its
+; main has the file's name so the blob can hold them all.
+.entry main_carsh

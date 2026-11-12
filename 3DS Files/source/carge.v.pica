@@ -1,0 +1,141 @@
+; The in-world car's gloss and reflection in one pass (TASKS.md #431).
+;
+; carsh.v.pica's gloss arm and carenv.v.pica, straight through with no flow
+; control and each output written once (#309, #327). The two passes were each
+; a full draw of every opaque batch the light material lights up; the user's
+; New 3DS trace put each at about the opaque pass's own cost (1.3 / 1.3 /
+; 1.0-1.2 ms on the player's car), most of it per vertex, not per pixel. Both
+; add over the first pass with the same blend and depth, so one draw can add
+; both -- which is what the GameCube's ps_Model mode 7 does in its one TEV
+; pass.
+;
+; The declarations up to the outputs are carsh.v.pica's, in its order, so
+; picasso gives every uniform and constant the same register (see
+; carenv.v.pica): model3d.c checks that before it uses this program.
+;
+; out.rgb   = CLR0.a gloss                    carsh's gloss arm, stored
+; out.a     = CLR0.a                          stored
+; texcoord1 = 0.5 n + 0.5                     carenv's sphere coordinate
+; texcoord2 = (CLR0.a (1 - t), CLR0.a t)      t = d^Pe, the reflection lerp's
+;                                             weights, read back through a
+;                                             ramp texture on unit 2
+;
+; The combiner (model3d.c drawGlossEnv()) rebuilds carenv's colour from the
+; two weights and the material's K0 / K1 as TEV constants:
+;   sat(2 (w0 K0 + w1 K1)) = sat(2 CLR0.a lerp(K0, K1, t)), carenv's out.rgb.
+
+.fvec mvp[4]
+.fvec sh[10]
+.fvec eye
+.fvec matD0
+.fvec matD1
+.fvec matS0
+.fvec matS1
+.fvec matP
+.fvec envm[3]
+.fvec envk0
+.fvec envk1
+.bool gloss
+
+.constf kc(0.0, 1.0, 0.5, 0.50196078)
+.constf kl(0.6666667, 0.4, 0.2857143, 0.01)
+.constf kf(0.00259, 0.03126, 0.25, 1.0)
+.alias  zeros kc.xxxx
+.alias  ones  kc.yyyy
+
+.out outpos position
+.out outtc0 texcoord0
+.out outtc1 texcoord1
+.out outtc2 texcoord2
+.out outclr color
+
+.alias inpos v0
+.alias innrm v1
+.alias intex v2
+
+.proc main_carge
+	mov r0.xyz, inpos
+	mov r0.w,   ones
+	dp4 r15.x, mvp[0], r0
+	dp4 r15.y, mvp[1], r0
+	dp4 r15.z, mvp[2], r0
+	dp4 r15.w, mvp[3], r0
+	mov outpos, r15
+	mov outtc0, intex
+
+	; n, the eye direction, d = sat(n.v) floored at 0.01 (carsh)
+	mov r1.xyz, innrm
+	mov r1.w,   zeros
+	add r2, eye, -r0
+	dp3 r3, r2, r2
+	rsq r3, r3.x
+	mul r2, r2, r3
+	dp3 r3, r1, r2
+	mov r7, kl
+	max r3, r7.wwww, r3
+	mov r5, matD0
+	mad r5, r3, matD1, r5
+
+	; carsh's gloss arm: R, d^Ps and d^Pe, SH(R)
+	add r4, r3, r3
+	mul r4, r4, r1
+	add r4, r4, -r2
+	lg2 r8, r3.x
+	mul r9, matP, r8
+	ex2 r12.x, r9.x
+	ex2 r12.y, r9.y
+	mov r10, r4
+	mul r8, r10, r10
+	mul r9, r10.xxyy, r10.yzzz
+	mov r11, sh[0]
+	mad r11, r8.xxxx, sh[1], r11
+	mad r11, r8.yyyy, sh[2], r11
+	mad r11, r8.zzzz, sh[3], r11
+	mad r11, r9.xxxx, sh[4], r11
+	mad r11, r9.yyyy, sh[5], r11
+	mad r11, r9.zzzz, sh[6], r11
+	mad r11, r10.xxxx, sh[7], r11
+	mad r11, r10.yyyy, sh[8], r11
+	mad r11, r10.zzzz, sh[9], r11
+	mov r7, kl
+	max r13, r7.wwww, r11.wwww
+	min r13, ones, r13
+	lg2 r13, r13.x
+	mul r13, matP.xxxx, r13
+	ex2 r13, r13.x
+	min r13, ones, r13
+	mov r14, matS0
+	mad r14, r12.xxxx, matS1, r14
+	mul r14, r13, r14
+	mul r14, r11, r14
+	mul r14, kc.wwww, r14
+	max r14, zeros, r14
+	min r14, ones, r14
+	mul r5, kc.wwww, r5
+	max r5, zeros, r5
+	min r5, ones, r5
+	mul r6.xyz, r5.wwww, r14
+	mov r6.w,   r5.w
+	mov outclr, r6
+
+	; carenv's sphere coordinate
+	dp3 r10.x, envm[0], r1
+	dp3 r10.y, envm[1], r1
+	dp3 r10.z, envm[2], r1
+	dp3 r11, r10, r10
+	rsq r11, r11.x
+	mul r10, r10, r11
+	mov r11, kc.zzzz
+	mad r10, r10, r11, r11
+	mov outtc1, r10
+
+	; the lerp's weights: CLR0.a (1 - t) and CLR0.a t
+	mul r8, r5.wwww, r12.yyyy
+	add r9, r5.wwww, -r8
+	mov r9.y, r8.y
+	mov r9.zw, zeros
+	mov outtc2, r9
+	end
+.end
+
+.entry main_carge

@@ -1,0 +1,72 @@
+# NFSU2-3DS: the repository holds the port's source, what builds the CIA, the
+# PC apps and the player/modder docs. Everything else in this folder is local
+# working material: game files, dumps, test shots, logs and session notes.
+
+# ---------------------------------------------------------------- top level
+# Only the folders and files listed with "!" are kept; anything new dropped in
+# the top level (logs, screenshots, scratch_* folders, patches) stays out.
+/*
+!/.gitignore
+!/.gitattributes
+!/LICENSE
+!/README.md
+!/MODDING.md
+!/CHEAT_CODES.MD
+!/3DS Files/
+!/tools/
+!/docs/
+!/PC Apps/
+
+# Left out on purpose (covered by /* above), named here so it is clear:
+#   Gamecube Files/, PC Files/, extracted/, gamedata_sample*, out/, assets/
+#                                  game data and dumps (not ours to share)
+#   weather_patch/, car_show_patch/  patched PC executables and their scripts
+#   scratch_*/                     diagnostics and texture dumps
+#   NFSU2-3DS.cia / .elf           tester builds (made by tools/build_cia.ps1)
+#   TASKS.md, HANDOFF.md, CONTINUE.MD, PORT_PROGRESS.MD, PARITY_AUDIT.md,
+#   TESTER_NOTES.md, LAUNCH_CHECKLIST.html, CAR_SHOW_WRITEUP.md,
+#   FEATURE_BRINGUP_DETAILS.MD, UNUSED_FEATURES.MD
+#                                  working notes, checklists, tester notes
+#   build_log*.txt, clean_log.txt, images, PDFs, fonts, zips
+
+# ---------------------------------------------------------------- anywhere
+.claude/
+__pycache__/
+*.pyc
+*.tmp
+*.bak
+*.bak[0-9]*
+*.bak_*
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------- 3DS Files
+# Kept: Makefile, source/, data/ (embedded fonts and button art), meta/
+# (banner, icon, app.rsf), romfs/.gitkeep.
+/3DS Files/*
+!/3DS Files/Makefile
+!/3DS Files/source/
+!/3DS Files/data/
+!/3DS Files/meta/
+!/3DS Files/romfs/
+# Made by the build from meta/
+/3DS Files/meta/banner.bnr
+/3DS Files/meta/icon.icn
+
+# ---------------------------------------------------------------- tools
+# Kept: the Python / PowerShell / C tools, 3ds-bin/ (makerom and bannertool,
+# which the Makefile calls), src/, app_icons/, ghidra_scripts/.
+/tools/_refs/
+/tools/bin/
+/tools/re/
+/tools/shots/
+# The Azahar test harness (local test runs, with this machine's test save)
+/tools/run_azahar_*.ps1
+/tools/watch_azahar.ps1
+
+# ---------------------------------------------------------------- docs
+# Kept: the format and retail-behaviour notes (*.md, layout dumps).
+# Left out: decompiled game code and game screenshots.
+/docs/**/*.c
+/docs/**/*.png
+/docs/reference_shots/

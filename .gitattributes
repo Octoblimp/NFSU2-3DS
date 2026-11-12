@@ -1,0 +1,2 @@
+# ffmpeg.exe (222 MB) is over GitHub's 100 MB file limit, so Git LFS keeps it.
+**/ffmpeg.exe filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,120 @@
+; Baked-lighting vertex shader for the retail frontend rooms packed by
+; tools/scene_pack.py (FRONTEND/PLATFORMS/<scene>.BIN -> .nfsc).
+;
+; Scenery has no normals at all: its 24-byte FVF is { pos[3], D3DCOLOR, uv[2] },
+; and the colour's RGB is a real 0..255 gradient -- the lighting the artists
+; baked in, which is why Showroom reads as a night alley with hot spots under
+; the street lamps and pools of dark asphalt between them. scene_pack.py
+; unpacks that RGB into the vertex's second float3 slot, the same slot a car
+; puts its normal in, so both models share one attribute layout, one loader and
+; one buffer setup; only this shader differs from car.v.pica.
+;
+; There is therefore nothing to light here. The baked colour is scaled and
+; lifted, clamped, and handed to the fragment stage as the primary colour for
+; the texture to modulate.
+;
+; CPU side precomputes:
+;   mvp    - projection * view, one combined 4x4 (scene vertices are already in
+;            world space -- scene_pack.py folded each part's translation in)
+;   shade  - x = ambient lift, y = gain, z = 1/gamma, w = 1 when the colour
+;            slot carries the vertex alpha (a room's disc shadow, #105), else 0
+;
+; The frontend rooms no longer use them: SPEED2.EXE's FE effect hands the baked
+; colour through as it is and its pixel shader doubles texture times colour,
+; which model3d.c's combiner does for model3d_draw_scene_turned(). They pass
+; ambient 0, gain 1 and 1/gamma 1. The world still does. What this applies is
+;
+;   colour = min(1, baked^(1/gamma) * gain + ambient)
+;
+;   uvoff  - added to the texcoord: a scrolling texture's offset this frame
+;            (TASKS.md #269, model3d.c), zero for everything else
+;
+; Pass 1/gamma = 1 for a plain lift-and-gain. The world wants a real gamma
+; instead. Measured over 38023 baked
+; vertices in 40 L4RA sections, its old 0.40 lift with 0.95 gain left a 2.19:1
+; range with 11.5% of the frame clipped to white and nothing below 0.45 -- an
+; evenly grey night, whatever the artists baked. baked^(1/1.8) at unit gain
+; gives 3.89:1 with 2.2% clipped, and being a power it maps 0 to 0, so the
+; unlit corners stay black instead of sitting on a floor.
+; See model3d.c for the values and the reasoning behind them.
+
+.fvec mvp[4]
+.fvec shade
+.fvec uvoff
+; posoff - a whole-metre point near the camera, subtracted from the position
+;            before the matrix (TASKS.md #376-#378, #382, #387), which has it
+;            folded in on the CPU; zero for everything but the world's
+;            sections. The PICA200's shader floats have a 16-bit mantissa, and
+;            a section's vertices sit a kilometre out in world space: dp4 over
+;            those cancels its big terms to about a centimetre of depth, and the
+;            rounding moves with the camera, so surfaces a few centimetres
+;            apart -- a decal on the ground, a door over its interior -- took
+;            turns in front frame to frame on the 3DS (the emulator's floats
+;            are 32-bit and never showed it). Whole metres are exact in those
+;            floats, so the subtraction is exact and the dp4 works on small
+;            numbers.
+.fvec posoff
+
+.constf myconst(0.0, 1.0, -1.0, 0.5)
+.constf tonec(0.000001, 0.0, 0.0, 0.0)
+.alias  zeros myconst.xxxx
+.alias  ones  myconst.yyyy
+.alias  tiny  tonec.xxxx
+
+.out outpos position
+.out outtc0 texcoord0
+.out outclr color
+
+.alias inpos v0
+.alias inclr v1
+.alias intex v2
+
+.proc main_scene
+	; Position -> clip space.
+	add r0.xyz, -posoff, inpos
+	mov r0.w,   ones
+
+	dp4 r1.x, mvp[0], r0
+	dp4 r1.y, mvp[1], r0
+	dp4 r1.z, mvp[2], r0
+	dp4 r1.w, mvp[3], r0
+	mov outpos, r1
+
+	; colour = min(1, baked^shade.z * gain + ambient). `shade` is copied into
+	; a temporary first for the same PICA200 reason car.v.pica documents: an
+	; arithmetic op reads at most one uniform, and mad would otherwise want
+	; two of its three sources from it. A constant likewise has to be src1
+	; (src2 must be a temp/input), which is why `tiny` and `ones` lead.
+	mov r6, shade
+
+	; The power runs through the scalar unit: lg2 and ex2 each take one
+	; component and there is no vector pow, so it is three of each. lg2(0) is
+	; -inf, hence the floor -- 1e-6 raised to any 1/gamma in use here is still
+	; under 0.001, which is below one step of the 8-bit output and so keeps
+	; black black. Every op is masked to xyz; alpha is written separately.
+	max r4.xyz, tiny, inclr
+	lg2 r3.x, r4.xxxx
+	lg2 r3.y, r4.yyyy
+	lg2 r3.z, r4.zzzz
+	mul r3.xyz, r3, r6.zzzz
+	ex2 r5.x, r3.xxxx
+	ex2 r5.y, r3.yyyy
+	ex2 r5.z, r3.zzzz
+
+	mad r5.xyz, r5, r6.yyyy, r6.xxxx
+	min r5.xyz, ones, r5
+
+	mov outclr.xyz, r5
+	; alpha = 1 + shade.w * (slot.x - 1): 1 for everything, the slot's own
+	; value for a batch scene_pack.py tagged BATCH_FE_VALPHA (#105).
+	add r7, -ones, inclr
+	mad outclr.w, r7.xxxx, r6.wwww, ones
+	; The uniform is src1, the input src2, for the reason given above.
+	add outtc0, uvoff, intex
+
+	end
+.end
+
+; #352: one of the shared worldsh blob's programs (shaders.h); its
+; main has the file's name so the blob can hold them all.
+.entry main_scene
