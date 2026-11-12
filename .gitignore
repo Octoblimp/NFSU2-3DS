@@ -55,10 +55,16 @@ desktop.ini
 
 # ---------------------------------------------------------------- tools
 # Kept: the Python / PowerShell / C tools, 3ds-bin/ (makerom and bannertool,
-# which the Makefile calls), src/, app_icons/, ghidra_scripts/.
+# which the Makefile calls), src/, app_icons/, ghidra_scripts/, and re/nis/'s
+# Python modules: world_anim.py and crowd_pack.py import them, so stage.py
+# fails without them (issue #1). The rest of re/ (RE notes and decompiled game
+# code, re/nis/*_ps.c included) stays out.
 /tools/_refs/
 /tools/bin/
-/tools/re/
+/tools/re/*
+!/tools/re/nis/
+/tools/re/nis/*
+!/tools/re/nis/*.py
 /tools/shots/
 # The Azahar test harness (local test runs, with this machine's test save)
 /tools/run_azahar_*.ps1
