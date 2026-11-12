@@ -144,6 +144,12 @@ GLOBAL_HUD_NAMES.append("3RDPERSON_BOXTIME")
 # (FEngSetRotationZ, 152 * nos - 180). hud.c reads its alpha on the CPU and is
 # never drawn as an image of its own.
 GLOBAL_HUD_NAMES.append("NOS_MASK")
+# The rear-view mirror's frame and cut-out (TASKS.md #501): SPEED2.EXE's
+# FUN_005b98b0 loads both out of this pack (0x8707e8 / 0x8707ec). After the
+# mirror's scene, FUN_005caad0 blends RVM (black, alpha ~136 inside the
+# trapezoid) over the capture and then writes RVM_MASK's alpha into it, so
+# the mirror is the darkened view inside the trapezoid. Both 128x64 DXT3.
+GLOBAL_HUD_NAMES += ["RVM", "RVM_MASK"]
 
 # HUD_Drag.fng's art, out of GLOBAL/InGameDrag.bun's HudTexturesDrag.tpk
 # (TASKS.md #268 D): ChooseLoadableTextures' drag plates and redline bands,

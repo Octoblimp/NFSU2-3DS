@@ -22,7 +22,7 @@ track_pack.py uses this module twice:
 
 WORLD.NFSW, little-endian:
     +0   "NFWA"
-    +4   u32 version (3)
+    +4   u32 version (4)
     +8   u32 model count, u32 tree count, u32 entity count,
          u32 instance count, u32 key count
     +28  pad to 32
@@ -42,6 +42,12 @@ WORLD.NFSW, little-endian:
     zones      x {u32 trigger zone (+1c / +20, the two are equal)}      4 B
                one per instance (v3): nonzero for a door, which only a
                shop NIS's DOOR_POSITION event for that zone plays
+    names      x {u32 node-name hash (WorldAnimEntityInfo +4)}          4 B
+               one per entity (v4)
+    ids        x {u32 instance id (WorldAnimInstance +0)}               4 B
+               one per instance (v4): GetAnimPosition (Speed.elf
+               0x80055E80) finds an entity by these two, which the world's
+               plane and train sounds follow (TASKS.md #509)
 
 A matrix is retail's bMatrix4 minus its last column: four rows of three, the
 X/Y/Z axes then the translation, applied to row vectors (v' = v * M).
@@ -64,7 +70,7 @@ CH_ENT, CH_INST, CH_MARK, CH_BANK = 0x37080, 0x37090, 0x37110, 0x00E34010
 
 NFSW_NAME = "WORLD.NFSW"
 NFSW_MAGIC = b"NFWA"
-NFSW_VERSION = 3
+NFSW_VERSION = 4
 SECTION_NAME = "WANIM"   # the pinned section holding the moving trees' models
 
 # The dummy translations the models are baked at in WANIM.nfsc: far enough
@@ -132,7 +138,7 @@ class WorldAnims(object):
                 w = struct.unpack_from("<16I", d, r)
                 f = struct.unpack_from("<16f", d, r)
                 self.instances.append(dict(
-                    tree=w[1], flags=w[3] or 0x28, speed=f[4] or 1.0,
+                    id=w[0], tree=w[1], flags=w[3] or 0x28, speed=f[4] or 1.0,
                     start_delay=f[5], loop_delay=f[6], zone_a=w[8], zone_b=w[9],
                     range=w[12], ev_track=w[13], race_gate=w[14],
                     scenario=struct.unpack_from("<H", d, r + 0x3C)[0],
@@ -278,7 +284,7 @@ class WorldAnims(object):
         return match, total
 
     def write(self, out_dir):
-        ents, trees, keys = [], [], []
+        ents, trees, keys, names = [], [], [], []
         tree_index = {}
         for th in self.moving_trees + self.door_trees:
             tree_index[th] = len(trees)
@@ -291,10 +297,12 @@ class WorldAnims(object):
                                         length, len(keys),
                                         *[v for row in e["local"] for v in row[:3]]))
                 keys.extend(k)
+                names.append(e["name"])
         insts = []
-        zones = []
+        zones, ids = [], []
         for i in self.moving + self.doors:
             zones.append(i["zone_a"] or i["zone_b"])
+            ids.append(i["id"])
             insts.append(struct.pack("<HHIfff12f3f3fI", tree_index[i["tree"]],
                                      i["scenario"], i["flags"], i["speed"],
                                      i["start_delay"], i["loop_delay"],
@@ -316,6 +324,10 @@ class WorldAnims(object):
             out += struct.pack("<10f", *k)
         for z in zones:
             out += struct.pack("<I", z)
+        for n in names:
+            out += struct.pack("<I", n)
+        for n in ids:
+            out += struct.pack("<I", n)
         with open(os.path.join(out_dir, NFSW_NAME), "wb") as fh:
             fh.write(out)
         return len(out)

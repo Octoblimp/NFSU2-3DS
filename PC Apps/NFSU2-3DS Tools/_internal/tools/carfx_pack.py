@@ -61,7 +61,19 @@ import track_pack
 OUT_NAME = "CARFX.nfsa"
 PURGE_SLOT = 0xA2
 H = track_pack.bstring_hash
-WORLD_GROUPS = ["CARFX_NITRO"]
+# CARFX_NITRO the car's nitrous flame (#317); XECH_FLAG_GIRL_FLARE the flag
+# girl's two hand flares in the race-start scenes (#497, FlagGirlFlareEffect,
+# Speed.elf 0x8004EF84: afxGetEmitters of that group): GlowA, SmokeA, SprksA.
+WORLD_GROUPS = ["CARFX_NITRO", "XECH_FLAG_GIRL_FLARE",
+                # The breakable items' glass (#513): CarDamage::ApplyDamage's
+                # TriggerEffect. The PC data has emitters for these ten of the
+                # fifteen CARFX_BREAK_* (none for the mirrors, the plates and
+                # the centre brakelight).
+                "CARFX_BREAK_HEADLIGHT_LEFT", "CARFX_BREAK_HEADLIGHT_RIGHT",
+                "CARFX_BREAK_BRAKELIGHT_LEFT", "CARFX_BREAK_BRAKELIGHT_RIGHT",
+                "CARFX_BREAK_WINDSHIELD", "CARFX_BREAK_WINDOW_REAR",
+                "CARFX_BREAK_WINDOW_LEFT_FRONT", "CARFX_BREAK_WINDOW_LEFT_REAR",
+                "CARFX_BREAK_WINDOW_RIGHT_FRONT", "CARFX_BREAK_WINDOW_RIGHT_REAR"]
 FLAG_KEYS = [("HOODLEFT", 1), ("HOODRIGHT", 2), ("WHEELLEFT", 4), ("WHEELRIGHT", 8)]
 
 

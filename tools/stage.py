@@ -224,14 +224,15 @@ def build_plan(pc, gd, tracks=ALL_TRACKS):
          narrow=per_car(lambda ns: [py("carshadow_pack.py", pc, "--out", J(gd, "CARS"),
                                        *[a for n in ns for a in ("--car", n)])],
                         lambda n: n in PLAYER_CARS + TRAFFIC_CARS))
-    pack("carextras", "vinyl_pack", ["vinyl_pack.py"], [cars, glob_], [J(gd, "CARS", "*.nfsv")], 31,
+    # Both decode HUFF textures with SPEED2.EXE's own decoder (huff.py).
+    pack("carextras", "vinyl_pack", ["vinyl_pack.py"], [cars, glob_, exe], [J(gd, "CARS", "*.nfsv")], 31,
          [py("vinyl_pack.py", pc, "--out", J(gd, "CARS"), "-j", "4")],
-         reads=["CARS/TEXTURES.BIN", "CARS/*/TEXTURES.BIN", "CARS/*/VINYLS.BIN", "GLOBAL/*"],
+         reads=["CARS/TEXTURES.BIN", "CARS/*/TEXTURES.BIN", "CARS/*/VINYLS.BIN", "GLOBAL/*", "SPEED2.EXE"],
          narrow=per_car(lambda ns: [py("vinyl_pack.py", pc, *ns, "--out", J(gd, "CARS"), "-j", "4")],
                         lambda n: n in PLAYER_CARS))
-    pack("carextras", "rim_pack", ["rim_pack.py"], [cars, glob_], [J(gd, "CARS", "WHEELS.nfsr")], 1,
+    pack("carextras", "rim_pack", ["rim_pack.py"], [cars, glob_, exe], [J(gd, "CARS", "WHEELS.nfsr")], 1,
          [py("rim_pack.py", pc, "--out", J(gd, "CARS"))],
-         reads=["CARS/TEXTURES.BIN", "CARS/WHEELS/*", "GLOBAL/*"])
+         reads=["CARS/TEXTURES.BIN", "CARS/WHEELS/*", "GLOBAL/*", "SPEED2.EXE"])
 
     for r in ROOMS:
         b = pcp(pc, "FRONTEND", "PLATFORMS", r + ".BIN")

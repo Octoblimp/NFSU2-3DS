@@ -55,8 +55,8 @@ WORLD.NFSK, little-endian:
         u32 hash; f32 mass; f32 invMass; f32 invInertia[9] (body space, rows);
         f32 cg[3]; f32 lo[3]; f32 hi[3] (the box, relative to the cg);
         f32 anchor; f32 lifetime; f32 bounce; f32 friction (clamped as Init
-        does); u32 flags (1 = the box is the polytope's, 2 = pieces -- not
-        ported, 4 = emitters); char name[24] (for the log);
+        does); u32 flags (1 = the box is the polytope's, 2 = pieces -- never
+        used: retail's Break cannot fire, see smokeable.c, 4 = emitters); char name[24] (for the log);
         u32 anchor emitter group (+0x84), u32 awaken emitter group (+0x88),
         both afx_pack.py's prop groups; u32 category (+0xd8); u32 0
     Spawner[spawners], 0x50 bytes, by id:

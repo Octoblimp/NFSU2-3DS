@@ -38,6 +38,10 @@ Format (little endian, every block 4-aligned):
   u32 sceneBytes, then the bundle's 0x80037020 chunk as it is (its 8-byte
   header included), where nis.c finds the 0x37030 scene header: the scene's
   hash, name and length, so the 1 MB bundle itself need not be on the card.
+  (version 3) u32 w, u32 h, then w x h u8: the alpha of the bundle's
+  CHARACTERSHADOW (its colour is black), the people's ground shadow
+  (InitCharacterEffects, Speed.elf 0x8004F420; #497). 0 x 0 when the bundle
+  has none, and retail then draws no shadow.
 
 usage: crowd_pack.py <PC Files> <out dir> [01 02 03 04 ShopEnter1 ShopExit1]
 
@@ -58,7 +62,7 @@ import skel as skelmod  # noqa: E402
 import nisanim  # noqa: E402
 import nisent  # noqa: E402
 
-VERSION = 2
+VERSION = 3
 MAXDIM = 128
 # Females use Bip03, everyone else Bip02 (the entities say so too; this is
 # only the fallback for a model no entity names).
@@ -287,6 +291,18 @@ def build(bun_path):
     out += struct.pack("<I", len(scene))
     out += scene
     pad4(out)
+    # CHARACTERSHADOW: DXT3, alpha-blended, so its alpha is kept as it is.
+    recs = {}
+    shadow = scene_pack.load_scene_textures(b, recs).get(bh("CHARACTERSHADOW"))
+    if shadow:
+        _n, sw, sh, rgba = shadow
+        out += struct.pack("<II", sw, sh)
+        out += bytes(rgba[3::4])
+        pad4(out)
+        report.append("  CHARACTERSHADOW %dx%d, alpha peak %d" % (sw, sh, max(rgba[3::4])))
+    else:
+        out += struct.pack("<II", 0, 0)
+        report.append("  no CHARACTERSHADOW: no ground shadows")
     report.insert(0, "  %d entities, %d anims, scene chunk %d bytes" % (len(ents), len(used_anims), len(scene)))
     return bytes(out), report
 

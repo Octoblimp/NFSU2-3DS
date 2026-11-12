@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the NIS audio streams the 3DS port plays: the crash camera's CollisionStream and the rain's thunder.
+"""Build the NIS audio streams the 3DS port plays: the crash camera's CollisionStream, the rain's thunder and the NIS scenes' own (#497).
 
 Pipeline (host-side; nothing here ships to the console):
 
@@ -43,6 +43,11 @@ The rain's thunder (TASKS.md #315): CARSFX_Rain::QueueWeatherStream
 {4, variant}. Group 3's records 14..22 carry (2, 0) -- variant 1, nine
 alternates -- and nothing carries (2, 1), so variant 2 finds no sound.
 Output: thunder0.dspm .. thunder8.dspm.
+
+The blown engine (TASKS.md #513): SFXCTL_Physics::UpdateParams asks
+QueStream(8, bStringHash("BLOWNENGINE")) once when the human car's engine
+blows; QueStream maps it to SoundFX_Select {8, 0x10}, group 3's records 9..12
+(3, 4). Output: blownengine0.dspm .. blownengine3.dspm.
 """
 import argparse
 import os
@@ -69,9 +74,13 @@ VGMSTREAM_CANDIDATES = [
 
 # The streams the port asks for: (file stem, group, p0, p1). A stem ending in
 # '#' takes every alternate, numbered from 0.
+#
+# The scenes' streams (#497) are named for their parameters instead -- see
+# scene_records(): nisend_<p0>_<p1>, nisstart_<p0>_<p1>_<p2>.
 STREAMS = [
     ("colstream#", 3, 1, 3),   # CollisionStream, SoundFX_Select {2, 8}
     ("thunder#", 3, 2, 0),     # THUNDERSTRM variant 1, SoundFX_Select {4, 1} (#315)
+    ("blownengine#", 3, 3, 4), # BLOWNENGINE, SoundFX_Select {8, 0x10} (#513)
 ]
 
 
@@ -84,19 +93,58 @@ def load_index():
     for i in range(ngroups):
         gid, length, off, base = struct.unpack_from("<IIII", idx, 0x58 + i * 16)
         nparam = idx[off + 4]
+        # +7 is the sector mask over 0x100: (unit >> 8) - 1 -- 0 for groups
+        # 0 and 3 (0x100), 1 for group 1 (0x200), 7 for group 2 (0x800), the
+        # smallest unit that keeps the group's sector count (+8) in 15 bits.
         groups.append(dict(id=gid, base=base, sub=off, count=idx[off + 5],
-                           width=2 + nparam, records=[]))
+                           width=2 + nparam, unit=(idx[off + 7] + 1) * 0x100, records=[]))
     for i, g in enumerate(groups):
         limit = groups[i + 1]["base"] if i + 1 < ngroups else big_size
         raw = []
         for r in range(g["count"]):
             o = g["sub"] + 12 + r * g["width"]
             sector = struct.unpack_from(">H", idx, o)[0]
-            raw.append((g["base"] + sector * 0x100, tuple(idx[o + 2:o + g["width"]])))
+            raw.append((g["base"] + sector * g["unit"], tuple(idx[o + 2:o + g["width"]])))
         for r, (start, params) in enumerate(raw):
             end = raw[r + 1][0] if r + 1 < len(raw) else limit
             g["records"].append(dict(index=r, offset=start, length=end - start, params=params))
     return groups
+
+
+def scene_records(groups):
+    """The NIS scenes' own streams (#497), as (file stem, record).
+
+    NIS_AudioParser::QueStream (0x8008B0A0) answers CAnimPlayer::Load
+    (0x8004A828: QueStream(2, scene hash, camera track)) with one Csis call,
+    every parameter one-hot (the file keeps the bit numbers):
+
+    - NIS_Select_End (group 1), {type, camera, 1}: the scene's index in
+      uEndNISStringHash (EndingNis01..07, -, DynoExit, ShopExit1, DynoEnter,
+      ShopEnter1) picks nisendtype (1 << index; DynoExit / DynoEnter 1 << 8,
+      ShopExit1 / ShopEnter1 1 << 9; 5..255 become 4, so EndingNis04 plays
+      EndingNis03's), the camera track the second (below; DynoExit /
+      ShopExit1 bit 15, DynoEnter / ShopEnter1 bit 14). CareerNis1 asks
+      {1 << 10, 1 << 14, 1}. (8, 16) answers no ask.
+    - NIS_Select_Start (group 2), {1 << intro index (IntroNis01 = bit 0),
+      camera, 1 or 4}: 4 -- p2 = 2 -- is the button-through take, the one
+      QueNISButtonThrough (0x8008B838) cues for a skip to the countdown and a
+      restart (RaceCoordinator +0x1C == 3) asks at once. (28, 17, 2) answers
+      no ask.
+    - The camera: track 0 is bit 13, track k (1..13) bit k - 1, after + 4
+      in an SUV race (or a Quick Race in an SUV) and + 8 with a second
+      player's car (split screen: bits 7..10, not in this one-player port).
+    NIS_Select_Crowd (group 0) is never called (only Init2 sets its handle).
+    """
+    out = []
+    for rec in groups[1]["records"]:
+        p0, p1, _p2 = rec["params"]
+        if p0 in (0, 1, 2, 8, 9, 10) and (p0, p1) != (8, 16):
+            out.append(("nisend_%d_%d" % (p0, p1), rec))
+    for rec in groups[2]["records"]:
+        p0, p1, p2 = rec["params"]
+        if p0 != 28 and not 7 <= p1 <= 10:
+            out.append(("nisstart_%d_%d_%d" % (p0, p1, p2), rec))
+    return out
 
 
 def find_vgmstream():
@@ -141,13 +189,17 @@ def cmd_build(groups, args):
     env["PATH"] = CYGWIN_BIN + os.pathsep + env.get("PATH", "")
     tmpdir = tempfile.mkdtemp(prefix="nisaudio_")
     total = 0
+    jobs = []
+    for stem, gi, p0, p1 in STREAMS:
+        hits = [r for r in groups[gi]["records"] if r["params"] == (p0, p1)]
+        if not hits:
+            sys.exit("%s: no sound with parameters (%d, %d) in group %d" % (stem, p0, p1, gi))
+        for n, rec in enumerate(hits):
+            jobs.append((stem.replace("#", str(n)) if stem.endswith("#") else stem, rec))
+    jobs += scene_records(groups)
     try:
-        for stem, gi, p0, p1 in STREAMS:
-            hits = [r for r in groups[gi]["records"] if r["params"] == (p0, p1)]
-            if not hits:
-                sys.exit("%s: no sound with parameters (%d, %d) in group %d" % (stem, p0, p1, gi))
-            for n, rec in enumerate(hits):
-                name = stem.replace("#", str(n)) if stem.endswith("#") else stem
+        for name, rec in jobs:
+            if True:
                 dst = os.path.join(args.out, name + ".dspm")
                 if os.path.exists(dst) and not args.force:
                     total += os.path.getsize(dst)
@@ -156,7 +208,7 @@ def cmd_build(groups, args):
                 cut = os.path.join(tmpdir, "cut.asf")
                 wav = os.path.join(tmpdir, "raw.wav")
                 res = os.path.join(tmpdir, "res.wav")
-                print("%-12s record %2d  @%08x %7d B" % (name, rec["index"], rec["offset"],
+                print("%-18s record %3d  @%08x %7d B" % (name, rec["index"], rec["offset"],
                                                         rec["length"]))
                 carve(rec["offset"], rec["length"], cut)
                 run([vgm, "-o", wav, cut])

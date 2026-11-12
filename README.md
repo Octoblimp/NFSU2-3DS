@@ -26,7 +26,9 @@ Local Wireless races up to six New 3DS consoles against each other.
   using CIA version), for the sound. From the Rosalina menu (L + D-Pad Down + SELECT): Miscellaneous
   options > Dump DSP firmware.
 - **Your own PC copy** of Need for Speed: Underground 2, installed (the
-  folder `SPEED2.EXE` is in).
+  folder `SPEED2.EXE` is in). The port has only been tested with the **US
+  version, patched to v1.2**; other versions (EU, other patch levels) are
+  not guaranteed to work.
 - About **2.6 GB** free on the SD card.
 - A Windows PC for the **NFSU2-3DS Tools** apps (nothing to install). Or
   any computer with Python 3, for the same tools as scripts (see

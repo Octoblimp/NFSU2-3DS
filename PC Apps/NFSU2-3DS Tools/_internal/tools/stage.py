@@ -224,14 +224,15 @@ def build_plan(pc, gd, tracks=ALL_TRACKS):
          narrow=per_car(lambda ns: [py("carshadow_pack.py", pc, "--out", J(gd, "CARS"),
                                        *[a for n in ns for a in ("--car", n)])],
                         lambda n: n in PLAYER_CARS + TRAFFIC_CARS))
-    pack("carextras", "vinyl_pack", ["vinyl_pack.py"], [cars, glob_], [J(gd, "CARS", "*.nfsv")], 31,
+    # Both decode HUFF textures with SPEED2.EXE's own decoder (huff.py).
+    pack("carextras", "vinyl_pack", ["vinyl_pack.py"], [cars, glob_, exe], [J(gd, "CARS", "*.nfsv")], 31,
          [py("vinyl_pack.py", pc, "--out", J(gd, "CARS"), "-j", "4")],
-         reads=["CARS/TEXTURES.BIN", "CARS/*/TEXTURES.BIN", "CARS/*/VINYLS.BIN", "GLOBAL/*"],
+         reads=["CARS/TEXTURES.BIN", "CARS/*/TEXTURES.BIN", "CARS/*/VINYLS.BIN", "GLOBAL/*", "SPEED2.EXE"],
          narrow=per_car(lambda ns: [py("vinyl_pack.py", pc, *ns, "--out", J(gd, "CARS"), "-j", "4")],
                         lambda n: n in PLAYER_CARS))
-    pack("carextras", "rim_pack", ["rim_pack.py"], [cars, glob_], [J(gd, "CARS", "WHEELS.nfsr")], 1,
+    pack("carextras", "rim_pack", ["rim_pack.py"], [cars, glob_, exe], [J(gd, "CARS", "WHEELS.nfsr")], 1,
          [py("rim_pack.py", pc, "--out", J(gd, "CARS"))],
-         reads=["CARS/TEXTURES.BIN", "CARS/WHEELS/*", "GLOBAL/*"])
+         reads=["CARS/TEXTURES.BIN", "CARS/WHEELS/*", "GLOBAL/*", "SPEED2.EXE"])
 
     for r in ROOMS:
         b = pcp(pc, "FRONTEND", "PLATFORMS", r + ".BIN")
@@ -314,7 +315,8 @@ def build_plan(pc, gd, tracks=ALL_TRACKS):
          [J(gd, "speech", "g*.dspm"), J(gd, "speech", "UG2_Speech.idx")], 858,
          [py("speech_build.py", "--out", J(gd, "speech"), "--force")])
     pack("speech", "nisaudio_build (NIS streams)", ["nisaudio_build.py"], [pcp(pc, "speech", "nisaudio.big")],
-         [J(gd, "speech", "colstream*.dspm"), J(gd, "speech", "thunder*.dspm")], 15,
+         [J(gd, "speech", "colstream*.dspm"), J(gd, "speech", "thunder*.dspm"),
+          J(gd, "speech", "nisend_*.dspm"), J(gd, "speech", "nisstart_*.dspm")], 128,
          [py("nisaudio_build.py", "--out", J(gd, "speech"), "--force")])
 
     crowd_out = [J(gd, "NIS", ("EndingNis%s" % c if c.isdigit() else c) + ".crowd") for c in CROWDS]
@@ -322,6 +324,12 @@ def build_plan(pc, gd, tracks=ALL_TRACKS):
          len(CROWDS), [py("crowd_pack.py", pc, J(gd, "NIS"), *CROWDS)])
     for f in ["Scene_CareerNis1_BundleB.bun", "Scene_ShopEnter1_EvtTrk.txt", "Scene_ShopExit1_EvtTrk.txt"]:
         copy("nis", pcp(pc, "NIS", f), J(gd, "NIS", f))
+    # Each played scene's EvtTrk (#497 / #520: its CAR_AUDIO_PATTERN engine
+    # revs); EndingNis04 has none on the disc.
+    for c in CROWDS:
+        f = "Scene_%s_EvtTrk.txt" % ("EndingNis%s" % c if c.isdigit() else c)
+        if c not in ("04", "ShopEnter1", "ShopExit1"):
+            copy("nis", pcp(pc, "NIS", f), J(gd, "NIS", f))
 
     # A track set: pack_world.py's archive, collision and index, the per-set
     # packs, then the set's .BUN and ROUTES copied (what pack_track_set.ps1

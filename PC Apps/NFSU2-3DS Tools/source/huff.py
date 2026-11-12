@@ -27,14 +27,62 @@ executing the original code, not reimplemented logic.
 """
 from __future__ import annotations
 
+import os
 import struct
 from pathlib import Path
 
 import pefile
-from unicorn import Uc, UC_ARCH_X86, UC_MODE_32
-from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ESP
+from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_32
+from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_EIP, UC_X86_REG_ESP
 
-FUNC_ADDR = 0x00573840
+FUNC_ADDR = 0x00573840   # in the US v1.2 SPEED2.EXE; other builds differ
+# The decoder's first 45 bytes (sub esp,0x408 ... mov [esp+0xc],ecx). They hold
+# no absolute address, so they are the same in every build of the game; the
+# EU v1.2 exe has the routine somewhere else and emulating 0x573840 there
+# faulted (vinyl_pack's BrokenProcessPool, 2026-11-12). The one global the
+# routine reads (0x8650f8 in the US exe) is addressed by its own code, so the
+# build's own copy is what it reads.
+FUNC_SIG = bytes.fromhex(
+    "81ec08040000"      # sub esp, 0x408
+    "8b8c240c040000"    # mov ecx, [esp+0x40c]
+    "535657"            # push ebx; push esi; push edi
+    "8bf8"              # mov edi, eax
+    "33c033d233db"      # xor eax,eax; xor edx,edx; xor ebx,ebx
+    "3bf8"              # cmp edi, eax
+    "8944244c"          # mov [esp+0x4c], eax
+    "89542418"          # mov [esp+0x18], edx
+    "897c2410"          # mov [esp+0x10], edi
+    "894c240c")         # mov [esp+0xc], ecx
+IMAGE_SCN_MEM_EXECUTE = 0x20000000
+
+
+class HuffError(RuntimeError):
+    """A HUFF decode or setup failure. Unicorn's UcError cannot be unpickled
+    (its __init__ takes errno first), so a worker process that raised one took
+    the whole ProcessPoolExecutor down with no message; this one can."""
+
+
+def find_decoder(pe, image_base):
+    """The decoder's VA in this SPEED2.EXE: FUNC_ADDR when the bytes there
+    match, else the one place in an executable section that does."""
+    hits = []
+    for sect in pe.sections:
+        if not sect.Characteristics & IMAGE_SCN_MEM_EXECUTE:
+            continue
+        data = sect.get_data()
+        va = image_base + sect.VirtualAddress
+        if va <= FUNC_ADDR < va + len(data) and \
+                data[FUNC_ADDR - va:FUNC_ADDR - va + len(FUNC_SIG)] == FUNC_SIG:
+            return FUNC_ADDR
+        at = data.find(FUNC_SIG)
+        while at >= 0:
+            hits.append(va + at)
+            at = data.find(FUNC_SIG, at + 1)
+    if len(hits) == 1:
+        return hits[0]
+    return None
+
+
 # Address of the RET that ends FUN_005744b9-adjacent code region; used only as
 # an emu_start stop address sentinel below (a plain "return to caller" trick),
 # not a real call target.
@@ -51,6 +99,15 @@ class HuffDecompressor:
     def __init__(self, exe_path: str | Path):
         self._pe = pefile.PE(str(exe_path), fast_load=True)
         image_base = self._pe.OPTIONAL_HEADER.ImageBase
+        self._func = find_decoder(self._pe, image_base)
+        if self._func is None:
+            # Say so here, once, rather than fault on the first block (or, in
+            # car_pack, quietly drop every HUFF texture).
+            raise HuffError(
+                "%s: the HUFF texture decoder is not in this SPEED2.EXE (%d bytes). "
+                "Use an unmodified, uncompressed v1.2 exe (US or EU); a packed or "
+                "copy-protected exe keeps its code encrypted on disk."
+                % (exe_path, os.path.getsize(exe_path)))
 
         self._mu = Uc(UC_ARCH_X86, UC_MODE_32)
         for sect in self._pe.sections:
@@ -88,9 +145,12 @@ class HuffDecompressor:
         self._mu.reg_write(UC_X86_REG_ESP, esp)
         self._mu.reg_write(UC_X86_REG_EAX, self._input_addr)
 
-        self._mu.emu_start(FUNC_ADDR, _RET_SENTINEL, timeout=0, count=0)
-
-        return bytes(self._mu.mem_read(self._output_addr, uncompressed_len))
+        try:
+            self._mu.emu_start(self._func, _RET_SENTINEL, timeout=0, count=0)
+            return bytes(self._mu.mem_read(self._output_addr, uncompressed_len))
+        except UcError as e:
+            raise HuffError("HUFF decode failed at 0x%08x (decoder 0x%08x): %s"
+                            % (self._mu.reg_read(UC_X86_REG_EIP), self._func, e)) from None
 
     def decompress_block(self, block: bytes) -> bytes:
         """block = the full HUFF block including its 16-byte header (magic..compressed_len)."""
