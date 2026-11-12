@@ -18,10 +18,19 @@
 // growing file held the FS for ~2 s, and with the old open-append-close on
 // the main thread that was a two-second freeze each time the log crossed one.
 
-// Opens the file and starts the writer. Call first thing in main(); a line
-// logged before it is written synchronously, as is everything if the thread
-// will not start.
+// #533 (the user, 2026-11-12): the log is off unless the config says
+// DebugLogging=1. Lines logged before the config is read wait in the RAM ring;
+// dbglog_start() then either opens the file and writes them, or drops them and
+// every line after.
+
+// Sets up the ring. Call first thing in main(); nothing reaches the card until
+// dbglog_start().
 void dbglog_init(void);
+
+// Once the config is read: `on` opens the file and starts the writer (a line
+// is written synchronously if the thread will not start); otherwise the queued
+// lines are dropped and logging stops for the run. Only the first call counts.
+void dbglog_start(bool on);
 
 // `prefix` (may be NULL) + `msg` + '\n'.
 void dbglog_line(const char* prefix, const char* msg);

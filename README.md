@@ -148,6 +148,7 @@ the game never changes a config that is already there.
 | `Region=US` | which region's version of the game to be: its cars, badges and cheat codes (see [Regions](#regions)) |
 | `Mods=CarPack,HudSkin` | which mods in `mods/` load, and in what order (`Mods=off` turns them all off); without the line, all of them load |
 | `HwVideo=0` | plays the movies on the CPU instead of the New 3DS's video hardware |
+| `DebugLogging=1` | writes a debug log, `sdmc:/nfsu2_debug.txt`, as the game runs; off without the line |
 
 ### Regions
 
@@ -186,8 +187,12 @@ What changes between them:
 their European ones, the US starter cars, the Best Buy vinyl, and
 opponents that drive any of them.
 
-The game writes `sdmc:/nfsu2_debug.txt` as it runs. Send it with a bug
-report, with the Luma3DS crash dump if it crashed.
+### Reporting a bug
+
+The game writes no log unless the config has `DebugLogging=1`. To report a
+bug, add that line, play until it happens again, and send
+`sdmc:/nfsu2_debug.txt` with the report, with the Luma3DS crash dump if it
+crashed.
 
 ## Building from source
 

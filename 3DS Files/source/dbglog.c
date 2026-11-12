@@ -54,6 +54,8 @@ static Thread s_thread;
 static s32 s_prio;        // the writer's, one below the main thread
 static volatile bool s_run;
 static bool s_inited;
+static bool s_started;   // dbglog_start(true) opened the file (#533)
+static bool s_disabled;  // dbglog_start(false), or the file would not open
 
 static FS_Archive s_arch;
 static Handle s_file;
@@ -210,6 +212,8 @@ static void ringPut(const char* p, u32 n) {
 static void submit(const char* a, u32 na, const char* b, u32 nb, bool newline) {
 	if (!s_inited)
 		dbglog_init();
+	if (s_disabled)
+		return;   // DebugLogging is off (#533)
 	u32 n = na + nb + (newline ? 1 : 0);
 	LightLock_Lock(&s_lock);
 	if (s_dropped) {
@@ -230,6 +234,8 @@ static void submit(const char* a, u32 na, const char* b, u32 nb, bool newline) {
 		s_dropped++;
 	}
 	LightLock_Unlock(&s_lock);
+	if (!s_started)
+		return;   // held in the ring until dbglog_start() (#533)
 	if (s_thread) {
 		LightEvent_Signal(&s_wake);
 	} else {
@@ -249,14 +255,35 @@ void dbglog_init(void) {
 	memset(s_pattern, ' ', sizeof(s_pattern));
 	for (u32 i = BLANK_LINE - 1; i < sizeof(s_pattern); i += BLANK_LINE)
 		s_pattern[i] = '\n';
+}
+
+void dbglog_start(bool on) {
+	if (!s_inited)
+		dbglog_init();
+	if (s_started || s_disabled)
+		return;
+	if (!on) {
+		// DebugLogging is off: what the boot queued is dropped, and so is
+		// everything after (submit() returns at once). No file is opened or
+		// made, so the card is never written to.
+		s_disabled = true;
+		LightLock_Lock(&s_lock);
+		s_tail = s_head;
+		s_done = s_head;
+		LightLock_Unlock(&s_lock);
+		return;
+	}
 
 	// The FS archive directly rather than stdio: one handle for the whole run,
 	// and writes at an offset, which is what lets the file keep its size.
-	if (R_FAILED(FSUSER_OpenArchive(&s_arch, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""))))
+	if (R_FAILED(FSUSER_OpenArchive(&s_arch, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, "")))) {
+		s_disabled = true;
 		return;
+	}
 	if (R_FAILED(FSUSER_OpenFile(&s_file, s_arch, fsMakePath(PATH_ASCII, LOG_PATH),
 	        FS_OPEN_READ | FS_OPEN_WRITE | FS_OPEN_CREATE, 0))) {
 		FSUSER_CloseArchive(s_arch);
+		s_disabled = true;
 		return;
 	}
 	s_open = true;
@@ -279,6 +306,15 @@ void dbglog_init(void) {
 		prepare();
 		while (s_blank < s_cap)
 			blankStep();
+		LightLock_Unlock(&s_io);
+	}
+	// The lines the boot queued before the config was read go out now.
+	s_started = true;
+	if (s_thread) {
+		LightEvent_Signal(&s_wake);
+	} else {
+		LightLock_Lock(&s_io);
+		drain();
 		LightLock_Unlock(&s_io);
 	}
 }

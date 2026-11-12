@@ -919,6 +919,7 @@ typedef struct {
 	char  dbgDisplaySet[96]; // name:value,... over the display settings (#326)
 	bool  dbgFirstRunConfig; // write both builds' first-run configs to test files (#449)
 	bool  debugMenuEnabled;  // DebugMenuEnabled: the Debug Menu from boot (#448)
+	bool  debugLogging;      // DebugLogging=1: write sdmc:/nfsu2_debug.txt (#533; off by default)
 	ConfigStatus status;
 	bool created;            // this run wrote the file: none was there (#449)
 	char path[512];          // where nfsu2_config.txt was looked for
@@ -1081,6 +1082,7 @@ static bool loadConfig(int argc, char** argv, Config* out) {
 	out->dbgDisplaySet[0] = '\0';
 	out->dbgFirstRunConfig = false;
 	out->debugMenuEnabled = false;
+	out->debugLogging = false;
 	out->status = CONFIG_NOT_FOUND;
 	out->created = false;
 
@@ -1510,6 +1512,8 @@ static bool loadConfig(int argc, char** argv, Config* out) {
 			out->dbgFirstRunConfig = atoi(val) != 0;
 		} else if (strcasecmp(key, "DebugMenuEnabled") == 0) {
 			out->debugMenuEnabled = atoi(val) != 0;
+		} else if (strcasecmp(key, "DebugLogging") == 0) {
+			out->debugLogging = atoi(val) != 0;
 		}
 	}
 	fclose(f);
@@ -58773,6 +58777,10 @@ int main(int argc, char* argv[])
 
 	Config cfg;
 	bool haveConfig = loadConfig(argc, argv, &cfg);
+	// #533 (the user, 2026-11-12): the debug log only with DebugLogging=1.
+	// Set even when the config fails a later check (a bad GameDir), so the log
+	// can say why; with no config at all it stays off.
+	dbglog_start(cfg.debugLogging);
 	g_dbgExitDirty = haveConfig && cfg.dbgExitDirty;
 	g_cfgMain = haveConfig ? &cfg : NULL;
 	// The local wireless link's soak (#321a, wirelesstest.h), in place of the
@@ -59206,9 +59214,12 @@ int main(int argc, char* argv[])
 		C2D_TextParse(&setupTitle, setupTextBuf, "NFSU2-3DS can't start yet");
 		C2D_TextParse(&setupBody, setupTextBuf, setupMsg);
 		C2D_TextParse(&setupHint, setupTextBuf,
-			"Setup steps: README.md, section 2.\n"
-			"Full log: sdmc:/nfsu2_debug.txt\n\n"
-			"Press HOME to quit.");
+			cfg.debugLogging
+				? "Setup steps: README.md, Installing.\n"
+				  "Full log: sdmc:/nfsu2_debug.txt\n\n"
+				  "Press HOME to quit."
+				: "Setup steps: README.md, Installing.\n\n"
+				  "Press HOME to quit.");
 		C2D_TextOptimize(&setupTitle);
 		C2D_TextOptimize(&setupBody);
 		C2D_TextOptimize(&setupHint);
