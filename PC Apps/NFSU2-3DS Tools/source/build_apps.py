@@ -220,6 +220,9 @@ reads, from your own PC copy of the game. Nothing else needs installing.
                          game's folder (the one SPEED2.EXE is in). Copy the
                          folder it makes to the 3DS's SD card. The first run
                          takes a long while; later runs only redo what changed.
+                         The Peugeot 106 and the Corsa (CARS/PEUGOT106 and
+                         CARS/CORSA, only in the UK/EU PC release) are packed
+                         when the PC game's folder has them, skipped if not.
 
   NFSU2-3DS Mod Packer   Turns a PC mod (a folder laid out like the game's,
                          e.g. <mod>/CARS/TT/TEXTURES.BIN) into a 3DS mod in

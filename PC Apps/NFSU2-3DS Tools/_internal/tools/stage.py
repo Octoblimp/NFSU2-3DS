@@ -79,6 +79,10 @@ PLAYER_CARS = ["240SX", "3000GT", "350Z", "A3", "CELICA", "CIVIC", "COROLLA", "C
                "ECLIPSE", "ESCALADE", "FOCUS", "G35", "GOLF", "GTO", "HUMMER", "IMPREZAWRX", "IS300",
                "LANCEREVO8", "MIATA", "MUSTANGGT", "NAVIGATOR", "PEUGOT", "PEUGOT106", "RSX", "RX7",
                "RX8", "SENTRA", "SKYLINE", "SUPRA", "TIBURON", "TT"]
+# The regional cars: only the UK/EU PC release has their CARS folders. Packed
+# when the install has them, skipped when it doesn't; the game shows them by
+# its Region (cardb_region_allows), and the US region never does.
+REGIONAL_CARS = ["CORSA", "PEUGOT106"]
 TRAFFIC_CARS = ["4DR_SEDAN", "4DR_SEDAN02", "COUPE", "HATCHBACK", "HATCHBACK02", "MINIVAN",
                 "PANELVAN", "PARCELVAN", "PICKUP", "SUV", "TAXI", "TAXI02"]
 # The frontend rooms (MegaloShop01 is never entered).
@@ -169,9 +173,17 @@ def child_env():
     return env
 
 
+def regional_absent(pc):
+    """The REGIONAL_CARS this install has no CARS folder for."""
+    return [c for c in REGIONAL_CARS if not os.path.isdir(pcp(pc, "CARS", c))]
+
+
 def build_plan(pc, gd, tracks=ALL_TRACKS):
     steps = []
     J = os.path.join
+    # Each regional car is one .nfsc, .nfsk, .nfsa, .nfss and .nfsv.
+    absent = regional_absent(pc)
+    less = len(absent)
 
     def copy(group, src, dst):
         steps.append(Step(group, "copy " + os.path.relpath(dst, gd).replace(os.sep, "/"), src=src, dst=dst))
@@ -211,21 +223,23 @@ def build_plan(pc, gd, tracks=ALL_TRACKS):
     exe = pcp(pc, "SPEED2.EXE")
     cars, glob_ = pcp(pc, "CARS"), pcp(pc, "GLOBAL")
     for c in PLAYER_CARS + TRAFFIC_CARS:
+        if c in absent:
+            continue
         pack("cars", "car_pack " + c, ["car_pack.py"], [pcp(pc, "CARS", c), exe],
              [J(gd, "CARS", c + ".nfsc")], 1,
              [py("car_pack.py", pcp(pc, "CARS", c), J(gd, "CARS", c + ".nfsc"))])
     pack("kits", "kit_pack (car kits, part libraries, PARTMODELS)", ["kit_pack.py"], [cars, glob_, exe],
-         [J(gd, "CARS", "*.nfsk"), J(gd, "GLOBAL", "PARTMODELS.nfsm")], 70, [py("kit_pack.py", pc, gd)],
+         [J(gd, "CARS", "*.nfsk"), J(gd, "GLOBAL", "PARTMODELS.nfsm")], 70 - less, [py("kit_pack.py", pc, gd)],
          reads=["CARS/*", "GLOBAL/*", "SPEED2.EXE"], narrow=kits_for)
-    pack("carextras", "carpartanim_pack", ["carpartanim_pack.py"], [cars], [J(gd, "CARS", "*.nfsa")], 31,
+    pack("carextras", "carpartanim_pack", ["carpartanim_pack.py"], [cars], [J(gd, "CARS", "*.nfsa")], 31 - less,
          [py("carpartanim_pack.py", pc, gd)], reads=["CARS/*/PARTS_ANIMATIONS.BIN"])
-    pack("carextras", "carshadow_pack", ["carshadow_pack.py"], [cars, exe], [J(gd, "CARS", "*.nfss")], 31,
+    pack("carextras", "carshadow_pack", ["carshadow_pack.py"], [cars, exe], [J(gd, "CARS", "*.nfss")], 31 - less,
          [py("carshadow_pack.py", pc, "--out", J(gd, "CARS"))], reads=["CARS/*/TEXTURES.BIN", "SPEED2.EXE"],
          narrow=per_car(lambda ns: [py("carshadow_pack.py", pc, "--out", J(gd, "CARS"),
                                        *[a for n in ns for a in ("--car", n)])],
                         lambda n: n in PLAYER_CARS + TRAFFIC_CARS))
     # Both decode HUFF textures with SPEED2.EXE's own decoder (huff.py).
-    pack("carextras", "vinyl_pack", ["vinyl_pack.py"], [cars, glob_, exe], [J(gd, "CARS", "*.nfsv")], 31,
+    pack("carextras", "vinyl_pack", ["vinyl_pack.py"], [cars, glob_, exe], [J(gd, "CARS", "*.nfsv")], 31 - less,
          [py("vinyl_pack.py", pc, "--out", J(gd, "CARS"), "-j", "4")],
          reads=["CARS/TEXTURES.BIN", "CARS/*/TEXTURES.BIN", "CARS/*/VINYLS.BIN", "GLOBAL/*", "SPEED2.EXE"],
          narrow=per_car(lambda ns: [py("vinyl_pack.py", pc, *ns, "--out", J(gd, "CARS"), "-j", "4")],
@@ -531,6 +545,10 @@ def stage(pc, gd, only=(), tracks=ALL_TRACKS, force=False, list_only=False, log=
     # The packers that open the install by a fixed path (eatrax_build,
     # speech_build ...) read this one.
     os.environ["NFSU2_PC_ROOT"] = os.path.abspath(pc)
+    absent = regional_absent(pc)
+    if absent:
+        log("stage: no %s in this install's CARS (only the UK/EU PC release has them) -- skipped; "
+            "the game runs without them, and the US region never shows them" % " / ".join(absent))
     steps = build_plan(pc, gd, tracks)
     for g in only:
         if g not in GROUPS:

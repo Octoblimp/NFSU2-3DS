@@ -28,7 +28,8 @@ Local Wireless races up to six New 3DS consoles against each other.
 - **Your own PC copy** of Need for Speed: Underground 2, installed (the
   folder `SPEED2.EXE` is in). The port has only been tested with the **US
   version, patched to v1.2**; other versions (EU, other patch levels) are
-  not guaranteed to work.
+  not guaranteed to work. The Peugeot 106 and the Corsa are optional (see
+  [The regional cars](#the-regional-cars)).
 - About **2.6 GB** free on the SD card.
 - A Windows PC for the **NFSU2-3DS Tools** apps (nothing to install). Or
   any computer with Python 3, for the same tools as scripts (see
@@ -61,6 +62,21 @@ file (or a `nfsu2_config.txt.txt`: Windows hides known extensions, so
 typing the name in Explorer adds a second `.txt`), a `GameDir` that isn't a
 folder on the SD card, and no DSP firmware. Press HOME, fix the SD card and
 start the game again.
+
+### The regional cars
+
+The **Peugeot 106** and the **Corsa** came with NFSU2 only in the UK/EU
+release, so a US install has no `CARS\PEUGOT106` or `CARS\CORSA` folder.
+Data Setup doesn't need them: it packs them when they are there and skips
+them when they aren't, and the game runs fine without them.
+
+If you want the 106 and the Corsa, copy those two folders from a UK/EU copy
+of the game into your PC install's `CARS` folder **before** you run Data
+Setup (if you already ran it, just run it again: it packs only the new
+cars). In the game, they then show up as your [`Region=`](#regions) says:
+every region but the US has them, and the US region leaves them out.
+Without the folders, keep `Region=US`: the other regions, and `ALL`, expect
+both cars (the Corsa is one of their starter cars).
 
 ### From a command line
 
@@ -173,7 +189,9 @@ What changes between them:
 - **Cars.** The US version has the Honda Civic and the Acura RSX. Every
   other region has the Peugeot 106 and the Corsa instead. With the Civic
   gone, the Corsa takes its place among the starter cars, and the
-  opponents drive the same region's cars.
+  opponents drive the same region's cars. The 106 and the Corsa are packed
+  only from a PC install that has them (see
+  [The regional cars](#the-regional-cars)).
 - **Badges and logos** (the car's name badge and maker's logo art).
   - US: Mazda Miata, Hyundai Tiburon.
   - Europe: Mazda MX-5, Hyundai Coupe, Vauxhall Corsa.

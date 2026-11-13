@@ -225,6 +225,9 @@ DEFAULT_CARS = ("240SX", "3000GT", "350Z", "A3", "CELICA", "CIVIC", "COROLLA", "
                 "IMPREZAWRX", "IS300", "LANCEREVO8", "MIATA", "MUSTANGGT", "NAVIGATOR",
                 "PEUGOT", "PEUGOT106", "RSX", "RX7", "RX8", "SENTRA", "SKYLINE", "SUPRA",
                 "TIBURON", "TT")
+# Only the UK/EU PC release has these two CARS folders; an install without
+# them skips their kits (tools/stage.py REGIONAL_CARS).
+REGIONAL_CARS = ("CORSA", "PEUGOT106")
 
 
 def ext(h, s):
@@ -784,6 +787,9 @@ def main():
             raise SystemExit("no geometry file matches kit pattern %s" % k)
         kit_list.extend(h for h in hits if h not in kit_list)
     for kit in kit_list:
+        if kit not in files and kit in REGIONAL_CARS:
+            print("  %s: not in this install (a UK/EU PC car) -- skipped" % kit)
+            continue
         if kit not in files:
             raise SystemExit("no geometry file for kit %s" % kit)
         wanted = set()

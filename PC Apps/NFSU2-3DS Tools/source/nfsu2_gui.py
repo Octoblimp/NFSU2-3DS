@@ -124,7 +124,9 @@ class App:
             "Makes every file the port reads from the PC install, into the game data folder, the "
             "New 3DS hardware movies (video/*.mvd) included. Only what is missing or out of date is "
             "redone, so running it again is quick. The first run takes a long while (the city, the "
-            "audio and the movies are large).")).pack(anchor="w")
+            "audio and the movies are large). The Peugeot 106 and the Corsa come only with the "
+            "UK/EU PC release: they are packed when the install's CARS folder has them and "
+            "skipped when it doesn't.")).pack(anchor="w")
         row = ttk.Frame(s)
         row.pack(fill="x", pady=(6, 0))
         self.list_btn = ttk.Button(row, text="Check what is out of date", command=lambda: self.setup(True))
