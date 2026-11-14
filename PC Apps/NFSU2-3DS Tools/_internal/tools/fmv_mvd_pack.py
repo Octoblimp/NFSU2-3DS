@@ -86,6 +86,18 @@ FULL_CANVAS = {"ealogo", "thx_logo", "fmvopening"}
 
 def pic_h(name):
     return 240 if name in FULL_CANVAS else 216
+
+
+def shown(path):
+    """path for the log: relative to the repo when it can be, else as given.
+    On Windows relpath raises when the game dir is on another drive than the
+    tools (GitHub #3: D:\\nfsu2 with the apps on C:)."""
+    try:
+        return os.path.relpath(path, ROOT)
+    except ValueError:
+        return path
+
+
 MAGIC = b"MVD1"
 HEADER_SIZE = 64
 
@@ -290,7 +302,7 @@ def main():
         os.replace(tmpdst, dst)
         fps = Fraction(fnum, fden)
         line = ("%-12s %s %dx%d %d frames @ %.3f fps -> %s  %.2f MB (vp6 %.2f MB)  profile %d level %d"
-                % (name, codec, w, h, nframes, float(fps), os.path.relpath(dst, ROOT),
+                % (name, codec, w, h, nframes, float(fps), shown(dst),
                    len(blob) / 1e6, os.path.getsize(src) / 1e6, sps[1], sps[3]))
         if a.verify:
             info = verify(dst, nframes, a.preview)

@@ -18,6 +18,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAVE_ROOT = os.path.join(ROOT, "PC Files", "SAVE", "NFS Underground 2")
 HASHES = os.path.join(ROOT, "tools", "_refs", "nfsu2-re", "docs", "dumps", "hashes.txt")
 
+
+def shown(path):
+    """path for the output: relative to the repo when it can be, else as
+    given (Windows relpath raises across drives, GitHub #3)."""
+    try:
+        return os.path.relpath(path, ROOT)
+    except ValueError:
+        return path
+
+
 MC02_MAGIC = 0x4D433032
 HDR_SIZE = 0x1C
 BLOCKA_SIZE = 8
@@ -316,7 +326,7 @@ def load(path):
 # --------------------------------------------------------------------- output
 def report(path, p, notes):
     print("=" * 78)
-    print(os.path.relpath(path, ROOT))
+    print(shown(path))
     print("  container: " + "  ".join(notes))
     print("-" * 78)
     print("  profile name          : %s" % p.name)
@@ -411,7 +421,7 @@ def main(argv):
         try:
             p, notes = load(path)
         except ValueError as e:
-            print("%s: %s" % (os.path.relpath(path, ROOT), e))
+            print("%s: %s" % (shown(path), e))
             continue
         report(path, p, notes)
         cols = collectibles_for(path)
