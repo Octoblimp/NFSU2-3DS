@@ -56869,14 +56869,30 @@ static void drawWorldTuiEdit(C2D_TextBuf buf, const Config* cfg) {
 				r[0] + r[2] - 3.0f, r[1] + 3.0f, strike, 2.0f, 0.81f);
 		}
 	}
-	const bool fr = cfg && strcmp(cfg->language, "French") == 0;
+	// The hint and Default in the chosen language (cfg->language, the
+	// LANGUAGES/<name>.bin it loads); English for anything else.
+	static const struct { const char* lang; const char* hint; const char* def; } kTuiText[] = {
+		{ "French", "Glisser : d\xC3\xA9placer\nToucher : activer / d\xC3\xA9sactiver", "D\xC3\xA9" "faut" },
+		{ "German", "Ziehen: verschieben\nTippen: ein / aus", "Standard" },
+		{ "Italian", "Trascina: sposta\nTocca: attiva / disattiva", "Predefinito" },
+		{ "Spanish", "Arrastrar: mover\nTocar: activar / desactivar", "Por defecto" },
+		{ "Dutch", "Slepen: verplaatsen\nTikken: aan / uit", "Standaard" },
+		{ "Swedish", "Dra: flytta\nTryck: p\xC3\xA5 / av", "Standard" },
+		{ "Danish", "Tr\xC3\xA6k: flyt\nTryk: til / fra", "Standard" },
+	};
+	const char* hint = "Drag: move\nTap: turn on / off";
+	const char* defLabel = "Default";
+	for (size_t i = 0; cfg && i < sizeof(kTuiText) / sizeof(kTuiText[0]); i++)
+		if (strcmp(cfg->language, kTuiText[i].lang) == 0) {
+			hint = kTuiText[i].hint;
+			defLabel = kTuiText[i].def;
+			break;
+		}
 	const float by = BOTTOM_H - WBOT_EDGE - WBOT_TUI_BAR_H;
 	drawWorldPlate(WBOT_EDGE, by, BOTTOM_W - 2.0f * WBOT_EDGE, WBOT_TUI_BAR_H, 0.84f, WBOT_ACCENT);
 	float b[2][4];
 	tuiBarRects(b);
-	const char* hint = fr ? "Glisser : d\xC3\xA9placer\nToucher : activer / d\xC3\xA9sactiver"
-		: "Drag: move\nTap: turn on / off";
-	const char* label[2] = { fr ? "D\xC3\xA9" "faut" : "Default", "OK" };
+	const char* label[2] = { defLabel, "OK" };
 	const float hs = 9.5f / g_fontUnitPx, ls = 12.0f / g_fontUnitPx;
 	C2D_Text t;
 	float tw = 0.0f, th = 0.0f;
@@ -56892,8 +56908,13 @@ static void drawWorldTuiEdit(C2D_TextBuf buf, const Config* cfg) {
 		C2D_TextFontParse(&t, g_uiFont, buf, label[k]);
 		C2D_TextOptimize(&t);
 		textDims(&t, ls, ls, &tw, &th);
+		// A longer word ("Predefinito") narrows to the button, as menuFitTextX does.
+		const float lroom = b[k][2] - 10.0f;
+		const float lsx = (tw > lroom && tw > 0.0f) ? ls * lroom / tw : ls;
+		if (lsx < ls)
+			tw = lroom;
 		C2D_DrawText(&t, C2D_WithColor, b[k][0] + (b[k][2] - tw) * 0.5f + (k == 1 ? 1.5f : 0.0f),
-			b[k][1] + (b[k][3] - th) * 0.5f, 0.89f, ls, ls, WBOT_INK);
+			b[k][1] + (b[k][3] - th) * 0.5f, 0.89f, lsx, ls, WBOT_INK);
 	}
 }
 
