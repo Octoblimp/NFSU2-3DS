@@ -380,6 +380,34 @@ typedef struct {
 // PORT (#471): the GPS rings' colour, 0xRRGGBB (retail 0x0080FF, the default).
 void minimap_set_gps_colour(u32 rgb);
 
+// PORT (the user, 2026-11-14): the bottom screen's own view of the map.
+//
+// minimap_set_full_panel(true): the map fills the whole rect minimap_draw() is
+// given -- no round mask and no ring -- and an icon past the edge is pinned to
+// the rect's edges instead of to a circle. False is the round panel above.
+//
+// The zoom is the player's, a multiplier on retail's aperture (1 = retail's).
+// minimap_zoom_step() moves it a step in (+1) or out (-1) and returns it,
+// kept between about 4x in and the whole map art across the panel's
+// short axis out. minimap_zoom_at_limit() says whether a step that way would
+// change anything, for greying the button.
+void minimap_set_full_panel(bool on);
+
+// The player's pan: dragging the map moves what it shows by (dxPx, dyPx)
+// screen pixels, the view's centre leaving the car (it is kept on the map
+// art). minimap_pan_ease() takes it back towards the car, keeping `keep` of
+// it a call, and minimap_is_panned() says whether it is off the car at all.
+void minimap_pan_by(Minimap* m, float dxPx, float dyPx);
+
+// The marker the last minimap_draw() put nearest screen point (px, py),
+// within `radius` pixels: its world point and element, as it was handed in.
+bool minimap_marker_at(const Minimap* m, float px, float py, float radius,
+	float* worldX, float* worldY, u8* element);
+void minimap_pan_ease(Minimap* m, float keep);
+bool minimap_is_panned(const Minimap* m);
+float minimap_zoom_step(Minimap* m, int dir);
+bool minimap_zoom_at_limit(const Minimap* m, int dir);
+
 void minimap_draw(Minimap* m, float worldX, float worldY, float headingRad,
 	float x, float y, float w, float h, MinimapMode mode,
 	const MinimapMarker* markers, int markerCount, const MinimapGps* gps);
