@@ -459,6 +459,11 @@ static void loadTimeEnd(const char* step) {
 //   HwVideoSelfTest  1 replaces every movie with mvd_player.c's test card,
 //                    to check that display path on hardware without an MVD
 //                    (Azahar). Default 0.
+//   TouchToggle      1 (default) puts the eye button on the touch screen's
+//                    map: a tap hides or shows its buttons, a long press opens
+//                    the layout editor (each one moved, turned off or put
+//                    back; drawWorldTuiEdit()). 0 leaves it out, and every
+//                    button shows in its first place.
 // Diagnostics, all off by default and never needed to play. They exist so a
 // reported screenshot can be reproduced and taken apart one variable at a
 // time without a rebuild per variable (#191):
@@ -814,6 +819,7 @@ typedef struct {
 	int  wirelessTestSeconds;
 	int  wirelessTestConsoles;
 	bool hwVideo;
+	bool touchToggle;   // TouchToggle=: the touch screen's eye and layout editor (default 1)
 	bool hwVideoSelfTest;
 	// The Dbg* keys; see above.
 	bool  haveDbgSpawn;
@@ -993,6 +999,7 @@ static bool loadConfig(int argc, char** argv, Config* out) {
 	out->wirelessTestSeconds = 60;
 	out->wirelessTestConsoles = 2;
 	out->hwVideo = true;
+	out->touchToggle = true;
 	out->hwVideoSelfTest = false;
 	out->haveDbgSpawn = false;
 	out->dbgSpawn[4] = 0.0f;
@@ -1202,6 +1209,8 @@ static bool loadConfig(int argc, char** argv, Config* out) {
 			out->hwVideo = atoi(val) != 0;
 		} else if (strcmp(key, "HwVideoSelfTest") == 0) {
 			out->hwVideoSelfTest = atoi(val) != 0;
+		} else if (strcasecmp(key, "TouchToggle") == 0) {
+			out->touchToggle = atoi(val) != 0;
 		} else if (strcmp(key, "DbgSpawn") == 0) {
 			// Four or five numbers separated by commas and/or spaces. strtof
 			// rather than sscanf("%f"): newlib only links float scanf on request.
@@ -56290,6 +56299,50 @@ static void drawWorldPlate(float x, float y, float w, float h, float z, u32 acce
 		C2D_DrawRectSolid(x + 1.0f, y + 1.0f, z + 0.01f, 3.0f, h - 2.0f, accent);
 }
 
+// PORT (the user, 2026-11-15): the touch screen's layout, the player's own.
+// The eye (drawWorldTouchToggle()) runs it all: a tap hides or shows the
+// zoom, rain and messages buttons and the bank (the GPS bar stays, it is the
+// route); held, it opens the layout editor, where every
+// item -- the zoom pair, rain, messages, bank and the eye itself -- can be
+// dragged anywhere, and a tap turns one off or back on (the eye stays).
+// "Default" puts them all back. Each item keeps an offset from its first
+// place, so it still steps aside when the GPS bar comes up. Kept in
+// GameDir/touchui.txt, written only when a change ends. TouchToggle=0 in the
+// config takes all of it away.
+enum { TUI_ZOOM, TUI_RAIN, TUI_SMS, TUI_BANK, TUI_EYE, TUI_COUNT };
+static const char* const kTuiKey[TUI_COUNT] = { "Zoom", "Rain", "Sms", "Bank", "Eye" };
+static struct {
+	bool loaded, hidden, dirty, edit, custom, dragging;
+	int drag;   // the item the finger is on in the editor, -1 none
+	bool on[TUI_COUNT];
+	float off[TUI_COUNT][2];
+} g_tui = { false, false, false, false, false, false, -1,
+	{ true, true, true, true, true }, { { 0 } } };
+static bool g_tuiBase = false;    // the rect functions leave the offset out
+static float g_bankRect[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+// Moves n rects (one item) by its offset, as far as the screen allows.
+static void tuiOffset(int item, float (*r)[4], int n) {
+	if (g_tuiBase || !g_tui.custom || (item == TUI_ZOOM && g_raceRun.on))
+		return;
+	float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+	for (int i = 0; i < n; i++) {
+		if (r[i][0] < x0) x0 = r[i][0];
+		if (r[i][1] < y0) y0 = r[i][1];
+		if (r[i][0] + r[i][2] > x1) x1 = r[i][0] + r[i][2];
+		if (r[i][1] + r[i][3] > y1) y1 = r[i][1] + r[i][3];
+	}
+	float dx = g_tui.off[item][0], dy = g_tui.off[item][1];
+	if (x0 + dx < 0.0f) dx = -x0;
+	if (x1 + dx > BOTTOM_W) dx = BOTTOM_W - x1;
+	if (y0 + dy < 0.0f) dy = -y0;
+	if (y1 + dy > BOTTOM_H) dy = BOTTOM_H - y1;
+	for (int i = 0; i < n; i++) {
+		r[i][0] += dx;
+		r[i][1] += dy;
+	}
+}
+
 static void drawWorldBankCompact(C2D_TextBuf buf) {
 	char cash[32];
 	formatCashGrouped(gProfile.cash, cash, sizeof(cash));
@@ -56303,9 +56356,13 @@ static void drawWorldBankCompact(C2D_TextBuf buf) {
 	float lw = 0.0f, lh = 0.0f, vw = 0.0f, vh = 0.0f;
 	textDims(&label, labelScale, labelScale, &lw, &lh);
 	textDims(&value, valueScale, valueScale, &vw, &vh);
-	const float x = WBOT_BANKC_X, y = WBOT_BANKC_Y, h = WBOT_BANKC_H;
+	const float h = WBOT_BANKC_H;
+	const float w = 10.0f + lw + 6.0f + vw + 10.0f;
+	float br[4] = { WBOT_BANKC_X, WBOT_BANKC_Y, w, h };
+	tuiOffset(TUI_BANK, (float (*)[4])br, 1);
+	memcpy(g_bankRect, br, sizeof(br));
+	const float x = br[0], y = br[1];
 	const float lx = x + 10.0f, vx = lx + lw + 6.0f;
-	const float w = (vx - x) + vw + 10.0f;
 	drawWorldPlate(x, y, w, h, 0.7f, WBOT_ACCENT);
 	// Both on one baseline: the label's bottom where the value's is.
 	const float vy = y + (h - vh) * 0.5f;
@@ -56464,6 +56521,7 @@ static void worldSmsBadgeRect(float mapX, float mapY, float mapW, float r[4]) {
 	r[1] = mapY + WBOT_BANKC_Y;
 	r[2] = WBOT_SMS_W;
 	r[3] = WBOT_BANKC_H;
+	tuiOffset(TUI_SMS, (float (*)[4])r, 1);
 }
 
 static void drawWorldSmsBadge(C2D_TextBuf buf, float mapX, float mapY, float mapW) {
@@ -56509,6 +56567,7 @@ static void worldRainRect(float mapX, float mapY, float mapH, bool gpsBar, float
 	r[1] = bottom - WBOT_EDGE - WBOT_RAIN_BTN;
 	r[2] = WBOT_RAIN_BTN;
 	r[3] = WBOT_RAIN_BTN;
+	tuiOffset(TUI_RAIN, (float (*)[4])r, 1);
 }
 
 static void worldRainCycle(void) {
@@ -56581,6 +56640,7 @@ static void worldZoomRects(float mapX, float mapY, float mapW, float mapH, bool 
 	r[1][0] = x; r[1][1] = mid + WBOT_ZOOM_GAP * 0.5f;
 	r[0][2] = r[1][2] = WBOT_ZOOM_BTN;
 	r[0][3] = r[1][3] = WBOT_ZOOM_BTN;
+	tuiOffset(TUI_ZOOM, r, 2);
 }
 
 static bool worldInRect(float px, float py, const float r[4]) {
@@ -56660,17 +56720,280 @@ static void worldMapTapSelect(float px, float py) {
 static void worldGpsUnitRect(const float close[4], float r[4]);
 static void worldGpsUnitToggle(void);
 
+#define WBOT_TOGGLE_BTN        26.0f
+#define WBOT_TUI_EDIT_HOLD_MS  600u
+#define WBOT_TUI_BAR_H         30.0f
+static bool g_tuiGpsBar = false;   // the GPS bar's up: the rects step aside
+
+static void worldToggleRect(float r[4]) {
+	r[0] = (BOTTOM_W - WBOT_TOGGLE_BTN) * 0.5f;   // top centre, clear of bank and messages
+	r[1] = WBOT_EDGE;
+	r[2] = WBOT_TOGGLE_BTN;
+	r[3] = WBOT_TOGGLE_BTN;
+	tuiOffset(TUI_EYE, (float (*)[4])r, 1);
+}
+
+// One item's rect on screen (the zoom pair's both), as drawn.
+static void tuiItemRect(int item, float r[4]) {
+	switch (item) {
+	case TUI_ZOOM: {
+		float z[2][4];
+		worldZoomRects(0.0f, 0.0f, BOTTOM_W, BOTTOM_H, g_tuiGpsBar, z);
+		r[0] = z[0][0];
+		r[1] = z[0][1];
+		r[2] = z[0][2];
+		r[3] = z[1][1] + z[1][3] - z[0][1];
+		break;
+	}
+	case TUI_RAIN: worldRainRect(0.0f, 0.0f, BOTTOM_H, g_tuiGpsBar, r); break;
+	case TUI_SMS: worldSmsBadgeRect(0.0f, 0.0f, BOTTOM_W, r); break;
+	case TUI_BANK:
+		r[0] = WBOT_BANKC_X;
+		r[1] = WBOT_BANKC_Y;
+		r[2] = g_bankRect[2] > 0.0f ? g_bankRect[2] : 80.0f;
+		r[3] = WBOT_BANKC_H;
+		tuiOffset(TUI_BANK, (float (*)[4])r, 1);
+		break;
+	default: worldToggleRect(r); break;
+	}
+}
+
+// After a drag: the offset trimmed to what the screen let it reach.
+static void tuiReclamp(int item) {
+	float cur[4], base[4];
+	tuiItemRect(item, cur);
+	g_tuiBase = true;
+	tuiItemRect(item, base);
+	g_tuiBase = false;
+	g_tui.off[item][0] = cur[0] - base[0];
+	g_tui.off[item][1] = cur[1] - base[1];
+}
+
+static void tuiDefaults(void) {
+	for (int i = 0; i < TUI_COUNT; i++) {
+		g_tui.on[i] = true;
+		g_tui.off[i][0] = g_tui.off[i][1] = 0.0f;
+	}
+}
+
+static void touchUiLoad(const Config* cfg) {
+	g_tui.loaded = true;
+	char path[600];
+	FILE* f = NULL;
+	if (cfg && buildGamePath(cfg, "touchui.txt", path, sizeof(path)))
+		f = fopen(path, "r");
+	if (!f)
+		return;
+	char line[96];
+	while (fgets(line, sizeof(line), f)) {
+		if (strncmp(line, "Hidden=", 7) == 0) {
+			g_tui.hidden = atoi(line + 7) != 0;
+			continue;
+		}
+		// Item=on,dx,dy
+		for (int i = 0; i < TUI_COUNT; i++) {
+			const size_t kl = strlen(kTuiKey[i]);
+			if (strncmp(line, kTuiKey[i], kl) != 0 || line[kl] != '=')
+				continue;
+			char* p = line + kl + 1;
+			g_tui.on[i] = strtol(p, &p, 10) != 0 || i == TUI_EYE;
+			if (*p == ',') g_tui.off[i][0] = (float)strtol(p + 1, &p, 10);
+			if (*p == ',') g_tui.off[i][1] = (float)strtol(p + 1, &p, 10);
+		}
+	}
+	fclose(f);
+}
+
+static void touchUiSave(const Config* cfg) {
+	char path[600];
+	if (!cfg || !buildGamePath(cfg, "touchui.txt", path, sizeof(path)))
+		return;
+	FILE* f = fopen(path, "w");
+	if (!f)
+		return;
+	fprintf(f, "Hidden=%d\n", g_tui.hidden ? 1 : 0);
+	for (int i = 0; i < TUI_COUNT; i++)
+		fprintf(f, "%s=%d,%d,%d\n", kTuiKey[i], g_tui.on[i] ? 1 : 0,
+			(int)(g_tui.off[i][0] + (g_tui.off[i][0] < 0 ? -0.5f : 0.5f)),
+			(int)(g_tui.off[i][1] + (g_tui.off[i][1] < 0 ? -0.5f : 0.5f)));
+	fclose(f);
+}
+
+// The editor's bar along the bottom: [0] Default, [1] OK.
+static void tuiBarRects(float r[2][4]) {
+	const float y = BOTTOM_H - WBOT_EDGE - WBOT_TUI_BAR_H;
+	r[1][2] = 44.0f;
+	r[1][0] = BOTTOM_W - WBOT_EDGE - 3.0f - r[1][2];
+	r[0][2] = 66.0f;
+	r[0][0] = r[1][0] - 4.0f - r[0][2];
+	r[0][1] = r[1][1] = y + 3.0f;
+	r[0][3] = r[1][3] = WBOT_TUI_BAR_H - 6.0f;
+}
+
+static void drawWorldTouchToggle(void) {
+	float r[4];
+	worldToggleRect(r);
+	const float x = r[0], y = r[1], s = r[2];
+	drawWorldPlate(x, y, s, s, 0.74f, g_tui.edit ? WBOT_ACCENT : 0);
+	const u32 ink = g_tui.hidden && !g_tui.edit ? WBOT_INK_DIM : WBOT_INK;
+	const u32 hole = C2D_Color32(16, 22, 30, 255);
+	// The eye: a ring and its pupil; struck through while the buttons hide.
+	const float cx = x + s * 0.5f + 1.0f, cy = y + s * 0.5f;
+	const float ew = 16.0f, eh = 10.0f;
+	C2D_DrawEllipseSolid(cx - ew * 0.5f, cy - eh * 0.5f, 0.76f, ew, eh, ink);
+	C2D_DrawEllipseSolid(cx - ew * 0.5f + 1.6f, cy - eh * 0.5f + 1.6f, 0.77f,
+		ew - 3.2f, eh - 3.2f, hole);
+	C2D_DrawCircleSolid(cx, cy, 0.78f, 2.4f, ink);
+	if (g_tui.hidden && !g_tui.edit) {
+		C2D_DrawLine(cx - 8.0f, cy + 6.0f, hole, cx + 8.0f, cy - 6.0f, hole, 4.0f, 0.785f);
+		C2D_DrawLine(cx - 8.0f, cy + 6.0f, ink, cx + 8.0f, cy - 6.0f, ink, 1.8f, 0.79f);
+	}
+}
+
+// The editor, over everything: each item outlined, the ones turned off
+// dimmed and struck through, and the bar with its hint, Default and OK.
+static void drawWorldTuiEdit(C2D_TextBuf buf, const Config* cfg) {
+	const u32 off = C2D_Color32(8, 10, 14, 0xB8);
+	const u32 strike = C2D_Color32(240, 96, 96, 255);
+	for (int i = 0; i < TUI_COUNT; i++) {
+		float r[4];
+		tuiItemRect(i, r);
+		const u32 line = g_tui.drag == i ? WBOT_INK : WBOT_ACCENT;
+		C2D_DrawRectSolid(r[0] - 1.0f, r[1] - 1.0f, 0.82f, r[2] + 2.0f, 1.0f, line);
+		C2D_DrawRectSolid(r[0] - 1.0f, r[1] + r[3], 0.82f, r[2] + 2.0f, 1.0f, line);
+		C2D_DrawRectSolid(r[0] - 1.0f, r[1], 0.82f, 1.0f, r[3], line);
+		C2D_DrawRectSolid(r[0] + r[2], r[1], 0.82f, 1.0f, r[3], line);
+		if (!g_tui.on[i]) {
+			C2D_DrawRectSolid(r[0], r[1], 0.8f, r[2], r[3], off);
+			C2D_DrawLine(r[0] + 3.0f, r[1] + r[3] - 3.0f, strike,
+				r[0] + r[2] - 3.0f, r[1] + 3.0f, strike, 2.0f, 0.81f);
+		}
+	}
+	const bool fr = cfg && strcmp(cfg->language, "French") == 0;
+	const float by = BOTTOM_H - WBOT_EDGE - WBOT_TUI_BAR_H;
+	drawWorldPlate(WBOT_EDGE, by, BOTTOM_W - 2.0f * WBOT_EDGE, WBOT_TUI_BAR_H, 0.84f, WBOT_ACCENT);
+	float b[2][4];
+	tuiBarRects(b);
+	const char* hint = fr ? "Glisser : d\xC3\xA9placer\nToucher : activer / d\xC3\xA9sactiver"
+		: "Drag: move\nTap: turn on / off";
+	const char* label[2] = { fr ? "D\xC3\xA9" "faut" : "Default", "OK" };
+	const float hs = 9.5f / g_fontUnitPx, ls = 12.0f / g_fontUnitPx;
+	C2D_Text t;
+	float tw = 0.0f, th = 0.0f;
+	C2D_TextFontParse(&t, g_uiFont, buf, hint);
+	C2D_TextOptimize(&t);
+	textDims(&t, hs, hs, &tw, &th);
+	const float room = b[0][0] - 8.0f - (WBOT_EDGE + 10.0f);
+	const float hsx = (tw > room && tw > 0.0f) ? hs * room / tw : hs;
+	C2D_DrawText(&t, C2D_WithColor, WBOT_EDGE + 10.0f, by + (WBOT_TUI_BAR_H - th) * 0.5f, 0.86f,
+		hsx, hs, WBOT_INK_DIM);
+	for (int k = 0; k < 2; k++) {
+		drawWorldPlate(b[k][0], b[k][1], b[k][2], b[k][3], 0.87f, k == 1 ? WBOT_ACCENT : 0);
+		C2D_TextFontParse(&t, g_uiFont, buf, label[k]);
+		C2D_TextOptimize(&t);
+		textDims(&t, ls, ls, &tw, &th);
+		C2D_DrawText(&t, C2D_WithColor, b[k][0] + (b[k][2] - tw) * 0.5f + (k == 1 ? 1.5f : 0.0f),
+			b[k][1] + (b[k][3] - th) * 0.5f, 0.89f, ls, ls, WBOT_INK);
+	}
+}
+
+// The editor's touch: drag an item to move it, tap one to turn it off or on,
+// tap the eye or OK to leave, Default to put everything back.
+static void worldTuiEditTouch(void) {
+	static int lastX = 0, lastY = 0, downX = 0, downY = 0;
+	const u32 held = hidKeysHeld();
+	if (!(held & KEY_TOUCH)) {
+		if (g_tui.drag >= 0) {
+			if (!g_tui.dragging) {
+				if (g_tui.drag == TUI_EYE) {
+					g_tui.edit = false;
+					dlog("touch layout: editor closed");
+				} else {
+					g_tui.on[g_tui.drag] = !g_tui.on[g_tui.drag];
+				}
+			}
+			g_tui.dirty = true;
+		}
+		g_tui.drag = -1;
+		g_tui.dragging = false;
+		return;
+	}
+	touchPosition tp;
+	hidTouchRead(&tp);
+	const float px = (float)tp.px, py = (float)tp.py;
+	if (hidKeysDown() & KEY_TOUCH) {
+		lastX = downX = tp.px;
+		lastY = downY = tp.py;
+		g_tui.drag = -1;
+		g_tui.dragging = false;
+		float b[2][4];
+		tuiBarRects(b);
+		if (worldInRect(px, py, b[0])) {
+			tuiDefaults();
+			g_tui.dirty = true;
+			dlog("touch layout: back to the defaults");
+			return;
+		}
+		if (worldInRect(px, py, b[1])) {
+			g_tui.edit = false;
+			g_tui.dirty = true;
+			dlog("touch layout: editor closed");
+			return;
+		}
+		static const int kOrder[TUI_COUNT] = { TUI_EYE, TUI_SMS, TUI_BANK, TUI_RAIN, TUI_ZOOM };
+		for (int k = 0; k < TUI_COUNT; k++) {
+			float r[4];
+			tuiItemRect(kOrder[k], r);
+			if (worldInRect(px, py, r)) {
+				g_tui.drag = kOrder[k];
+				break;
+			}
+		}
+		return;
+	}
+	if (g_tui.drag < 0)
+		return;
+	if (!g_tui.dragging && (abs(tp.px - downX) > WBOT_TAP_SLOP || abs(tp.py - downY) > WBOT_TAP_SLOP))
+		g_tui.dragging = true;
+	if (g_tui.dragging) {
+		g_tui.off[g_tui.drag][0] += (float)(tp.px - lastX);
+		g_tui.off[g_tui.drag][1] += (float)(tp.py - lastY);
+		tuiReclamp(g_tui.drag);
+	}
+	lastX = tp.px;
+	lastY = tp.py;
+}
+
 static void worldMapTouch(float mapX, float mapY, float mapW, float mapH, bool gpsBar,
-		bool smsBadge, bool rainBtn) {
+		bool smsBadge, bool rainBtn, bool toggleOn) {
 	static int holdDir = 0;
 	static u64 holdT0 = 0, lastStep = 0, releasedAt = 0;
-	static bool onMap = false, panning = false;
+	static bool onMap = false, panning = false, onToggle = false;
 	static int lastX = 0, lastY = 0, downX = 0, downY = 0;
 	if (!g_minimap)
 		return;
+	g_tuiGpsBar = gpsBar;
+	if (g_tui.edit) {
+		onMap = panning = onToggle = false;
+		holdDir = 0;
+		worldTuiEditTouch();
+		return;
+	}
+	// The eye's tap hides the buttons; the layout turns any of them off.
+	const bool btns = !(toggleOn && g_tui.hidden);
+	const bool zoomOn = btns && (!toggleOn || g_tui.on[TUI_ZOOM]);
+	smsBadge = smsBadge && btns && (!toggleOn || g_tui.on[TUI_SMS]);
+	rainBtn = rainBtn && btns && (!toggleOn || g_tui.on[TUI_RAIN]);
 	const u32 held = hidKeysHeld();
 	const u64 now = osGetTime();
 	if (!(held & KEY_TOUCH)) {
+		if (onToggle) {
+			g_tui.hidden = !g_tui.hidden;
+			g_tui.dirty = true;
+			onToggle = false;
+			dlog(g_tui.hidden ? "minimap: eye -> touch buttons hidden"
+				: "minimap: eye -> touch buttons shown");
+		}
 		if (onMap && !panning && abs(lastX - downX) <= WBOT_TAP_SLOP &&
 				abs(lastY - downY) <= WBOT_TAP_SLOP)
 			worldMapTapSelect((float)downX, (float)downY);
@@ -56693,9 +57016,35 @@ static void worldMapTouch(float mapX, float mapY, float mapW, float mapH, bool g
 	worldZoomRects(mapX, mapY, mapW, mapH, gpsBar, zr);
 	worldGpsRects(mapX, mapY, mapW, mapH, bar, close);
 	int dir = 0;
-	for (int k = 0; k < 2; k++)
+	for (int k = 0; k < 2 && zoomOn; k++)
 		if (worldInRect(px, py, zr[k]))
 			dir = k == 0 ? 1 : -1;
+	float tg[4];
+	worldToggleRect(tg);
+	if (toggleOn && (hidKeysDown() & KEY_TOUCH) && worldInRect(px, py, tg)) {
+		// The eye first: it can sit over anything, wherever it was put.
+		onToggle = true;
+		holdDir = 0;
+		onMap = false;
+		panning = false;
+		holdT0 = now;
+		downX = tp.px;
+		downY = tp.py;
+		return;
+	}
+	if (onToggle) {
+		if (abs(tp.px - downX) > WBOT_TAP_SLOP || abs(tp.py - downY) > WBOT_TAP_SLOP) {
+			onToggle = false;   // slid off: neither a tap nor a hold
+		} else if (now - holdT0 >= WBOT_TUI_EDIT_HOLD_MS && !g_raceRun.on) {
+			// Held: the layout editor, on the finger's next touch.
+			onToggle = false;
+			g_tui.edit = true;
+			g_tui.drag = -1;
+			g_tui.dragging = false;
+			dlog("touch layout: editor open");
+		}
+		return;
+	}
 	if (hidKeysDown() & KEY_TOUCH) {
 		holdDir = dir;
 		holdT0 = now;
@@ -57004,23 +57353,40 @@ static void drawWorldBottom(C2D_TextBuf buf, const Config* cfg) {
 		const int gpsMk = (!g_raceRun.on && !stage0) ? worldGpsMarker() : -1;
 		const bool smsBadge = !g_raceRun.on && !stage0;
 		const bool rainBtn = !g_raceRun.on && !stage0;
-		worldMapTouch(0.0f, mapY, mapW, mapH, gpsMk >= 0, smsBadge, rainBtn);
-		drawWorldZoomButtons(0.0f, mapY, mapW, mapH, gpsMk >= 0);
-		if (rainBtn)
+		if (!g_tui.loaded)
+			touchUiLoad(cfg);
+		const bool toggleOn = cfg && cfg->touchToggle && !stage0;
+		g_tui.custom = toggleOn;
+		if (!toggleOn || g_raceRun.on)
+			g_tui.edit = false;
+		worldMapTouch(0.0f, mapY, mapW, mapH, gpsMk >= 0, smsBadge, rainBtn, toggleOn);
+		const bool ed = g_tui.edit;
+		const bool btns = ed || !(toggleOn && g_tui.hidden);
+		if (btns && (ed || !toggleOn || g_tui.on[TUI_ZOOM]))
+			drawWorldZoomButtons(0.0f, mapY, mapW, mapH, gpsMk >= 0);
+		if (rainBtn && btns && (ed || !toggleOn || g_tui.on[TUI_RAIN]))
 			drawWorldRainButton(0.0f, mapY, mapH, gpsMk >= 0);
-		if (gpsMk >= 0)
+		if (gpsMk >= 0 && !ed)
 			drawWorldGpsBar(buf, cfg, gpsMk, 0.0f, mapY, mapW, mapH);
-		if (smsBadge)
+		if (smsBadge && btns && (ed || !toggleOn || g_tui.on[TUI_SMS]))
 			drawWorldSmsBadge(buf, 0.0f, mapY, mapW);
+		if (toggleOn)
+			drawWorldTouchToggle();
+		if (g_tui.dirty) {
+			touchUiSave(cfg);
+			g_tui.dirty = false;
+		}
 	}
 	// ---- the bank readout, or a world challenge's clock in its place, over
 	// the map ----
 	if (!g_raceRun.on && !stage0) {
 		if (g_wc.active && g_wc.state == WC_STATE_COUNTING)
 			drawWorldCountdown(buf);
-		else
+		else if (g_tui.edit || !g_tui.custom || (g_tui.on[TUI_BANK] && !g_tui.hidden))
 			drawWorldBankCompact(buf);
 	}
+	if (g_tui.edit)
+		drawWorldTuiEdit(buf, cfg);
 	// GPS_Search_Group: on the top screen since #487 (drawWorldGpsSearch).
 	if (showMap && !minimap_have_map(g_minimap)) {
 		// Name the file instead of leaving the panel empty -- buildSetupMessage()'s
