@@ -459,6 +459,11 @@ static void loadTimeEnd(const char* step) {
 //   HwVideoSelfTest  1 replaces every movie with mvd_player.c's test card,
 //                    to check that display path on hardware without an MVD
 //                    (Azahar). Default 0.
+//   TouchToggle      1 (default) puts the eye button on the touch screen's
+//                    map: a tap hides or shows its buttons, a long press opens
+//                    the layout editor (each one moved, turned off or put
+//                    back; drawWorldTuiEdit()). 0 leaves it out, and every
+//                    button shows in its first place.
 // Diagnostics, all off by default and never needed to play. They exist so a
 // reported screenshot can be reproduced and taken apart one variable at a
 // time without a rebuild per variable (#191):
@@ -798,6 +803,12 @@ typedef enum {
 
 typedef struct {
 	char gameDir[256];
+	// Language=: which LANGUAGES/<name>.bin the text comes from ("" = English).
+	// buildGamePath() swaps it in for LANGUAGES/English.bin when the file is
+	// on the card, so every reader of the string table follows it.
+	char language[16];
+	bool languageSet;   // a Language= line was there (the boot picker's first run)
+	bool languageAsk;   // Language=ASK: the boot picker every start
 	// Mods= (#320, modfs.h): which folders of GameDir/mods lay over the
 	// data, in order; modsSet false = no line, every folder in name order.
 	char mods[256];
@@ -808,6 +819,7 @@ typedef struct {
 	int  wirelessTestSeconds;
 	int  wirelessTestConsoles;
 	bool hwVideo;
+	bool touchToggle;   // TouchToggle=: the touch screen's eye and layout editor (default 1)
 	bool hwVideoSelfTest;
 	// The Dbg* keys; see above.
 	bool  haveDbgSpawn;
@@ -978,12 +990,16 @@ static bool g_dbgTuneBdSweep;
 
 static bool loadConfig(int argc, char** argv, Config* out) {
 	out->gameDir[0] = '\0';
+	out->language[0] = '\0';
+	out->languageSet = false;
+	out->languageAsk = false;
 	out->mods[0] = '\0';
 	out->modsSet = false;
 	out->wirelessTest = 0;
 	out->wirelessTestSeconds = 60;
 	out->wirelessTestConsoles = 2;
 	out->hwVideo = true;
+	out->touchToggle = true;
 	out->hwVideoSelfTest = false;
 	out->haveDbgSpawn = false;
 	out->dbgSpawn[4] = 0.0f;
@@ -1159,6 +1175,27 @@ static bool loadConfig(int argc, char** argv, Config* out) {
 		if (strcmp(key, "GameDir") == 0) {
 			strncpy(out->gameDir, val, sizeof(out->gameDir) - 1);
 			out->gameDir[sizeof(out->gameDir) - 1] = '\0';
+		} else if (strcasecmp(key, "Language") == 0) {
+			// The PC's LANGUAGES/<name>.bin files, by name or by code. The
+			// fonts carry Latin-1, so the Asian tables are left out.
+			static const struct { const char* name; const char* file; } kLanguages[] = {
+				{ "EN", "" }, { "ENGLISH", "" },
+				{ "FR", "French" }, { "FRENCH", "French" }, { "FRANCAIS", "French" },
+				{ "DE", "German" }, { "GERMAN", "German" }, { "DEUTSCH", "German" },
+				{ "IT", "Italian" }, { "ITALIAN", "Italian" }, { "ITALIANO", "Italian" },
+				{ "ES", "Spanish" }, { "SPANISH", "Spanish" }, { "ESPANOL", "Spanish" },
+				{ "NL", "Dutch" }, { "DUTCH", "Dutch" }, { "NEDERLANDS", "Dutch" },
+				{ "SV", "Swedish" }, { "SWEDISH", "Swedish" },
+				{ "DA", "Danish" }, { "DANISH", "Danish" },
+			};
+			out->language[0] = '\0';
+			out->languageSet = true;
+			out->languageAsk = strcasecmp(val, "ASK") == 0;
+			for (size_t li = 0; li < sizeof(kLanguages) / sizeof(kLanguages[0]); li++)
+				if (strcasecmp(val, kLanguages[li].name) == 0) {
+					snprintf(out->language, sizeof(out->language), "%s", kLanguages[li].file);
+					break;
+				}
 		} else if (strcmp(key, "Mods") == 0) {
 			snprintf(out->mods, sizeof(out->mods), "%s", val);
 			out->modsSet = true;
@@ -1172,6 +1209,8 @@ static bool loadConfig(int argc, char** argv, Config* out) {
 			out->hwVideo = atoi(val) != 0;
 		} else if (strcmp(key, "HwVideoSelfTest") == 0) {
 			out->hwVideoSelfTest = atoi(val) != 0;
+		} else if (strcasecmp(key, "TouchToggle") == 0) {
+			out->touchToggle = atoi(val) != 0;
 		} else if (strcmp(key, "DbgSpawn") == 0) {
 			// Four or five numbers separated by commas and/or spaces. strtof
 			// rather than sscanf("%f"): newlib only links float scanf on request.
@@ -1640,6 +1679,14 @@ static bool buildGamePath(const Config* cfg, const char* relPath, char* out, siz
 	if (cfg->gameDir[0] == '\0') return false;
 	size_t len = strlen(cfg->gameDir);
 	bool needsSlash = (len > 0 && cfg->gameDir[len - 1] != '/');
+	// Language=: the chosen table in English.bin's place, when it is on the card.
+	if (cfg->language[0] != '\0' && strcmp(relPath, "LANGUAGES/English.bin") == 0) {
+		struct stat st;
+		snprintf(out, outSize, "sdmc:%s%sLANGUAGES/%s.bin", cfg->gameDir, needsSlash ? "/" : "",
+			cfg->language);
+		if (stat(out, &st) == 0 && S_ISREG(st.st_mode))
+			return true;
+	}
 	snprintf(out, outSize, "sdmc:%s%s%s", cfg->gameDir, needsSlash ? "/" : "", relPath);
 	return true;
 }
@@ -6707,6 +6754,11 @@ static void dbgLinearRelease(void) {
 static int g_dbgNoBeam;         // Config's DbgNoBeam, for the world draw's headlight
 static int g_dbgNoRefl;         // Config's DbgNoRefl, for the road's reflection
 static float g_dbgRain = -1.0f; // Config's DbgRain (#315), < 0 = the weather's own
+// PORT (the user, 2026-11-14): the touch screen's rain button
+// (drawWorldRainButton()): 0 the weather's own, 1 dry, 2 light rain, 3 heavy.
+// Over DbgRain while it is not 0; rain_update() eases into it over a second.
+static int g_rainMode = 0;
+static const float kRainModeIntensity[4] = { -1.0f, 0.0f, 0.4f, 1.0f };
 static float g_dbgLensHold;      // Config's DbgLensHold (#406), 0 = off
 static int g_dbgNoWorldFlares;  // Config's DbgNoWorldFlares, for the world's lamps
 static int g_dbgNoTireMask;     // Config's DbgNoTireMask, for the frontend car's rims
@@ -30460,6 +30512,81 @@ static int modeRowImageTint(const MenuState* m, int i, u32* rgba) {
 	return 0;
 }
 
+// PORT (the user, 2026-11-14): a translated string can be wider than the
+// English one its screen was laid out for, and the panel's scissor
+// (menuClipBegin()) then cuts it off at the screen's edge. This narrows it to
+// what is left between its anchor and the panel's edge -- horizontally only,
+// so its line height and the layout around it stay as they are. A string that
+// already fits, or whose anchor is off the panel, comes back untouched.
+static float menuFitTextX(const MenuState* m, const C2D_Text* t, u32 align, float x,
+		float scaleX, float scaleY) {
+	float lo = menuX(m, -MENU_REF_W * 0.5f), hi = menuX(m, MENU_REF_W * 0.5f);
+	if (lo < 0.0f)
+		lo = 0.0f;
+	if (hi > m->screenW)
+		hi = m->screenW;
+	lo += 2.0f;
+	hi -= 2.0f;
+	if (x < lo || x > hi || scaleX <= 0.0f)
+		return scaleX;
+	float tw = 0.0f, th = 0.0f;
+	textDims(t, scaleX, scaleY, &tw, &th);
+	const float avail = align == C2D_AlignCenter ? 2.0f * fminf(x - lo, hi - x)
+		: align == C2D_AlignRight ? x - lo : hi - x;
+	if (tw <= avail || avail < 8.0f || tw <= 0.0f)
+		return scaleX;
+	return scaleX * avail / tw;
+}
+
+// PORT (the user, 2026-11-14): a button badge sits in its own slot just left
+// of the word it goes with (drawMenu()'s pad-glyph arm). A translated word
+// that is centred or right-justified grows leftwards when it is longer than
+// the English one, and ran under the badge -- "Ouvrir" drew as "uvrir". Such
+// a word starts just right of the badge instead, running right from there,
+// narrowed only if it would pass the panel's edge.
+static void menuAvoidPadGlyph(const MenuState* m, int i, u32* align, float* x, float top,
+		float th, float* scaleX, float scaleY) {
+	float tw = 0.0f, h = 0.0f;
+	textDims(&m->texts[i], *scaleX, scaleY, &tw, &h);
+	if (tw <= 0.0f)
+		return;
+	const float left = *align == C2D_AlignCenter ? *x - tw * 0.5f
+		: *align == C2D_AlignRight ? *x - tw : *x;
+	for (int k = 0; k < m->padGlyphCount; k++) {
+		const int j = m->padGlyphIdx[k];
+		if (j == i || j < 0 || j >= m->screen.widgetCount)
+			continue;
+		// The badge's box, placed exactly as drawMenu() places it.
+		const FngWidget* wj = &m->screen.widgets[j];
+		float gh = menuTextScaleRaw(m, wj) * m->groupScaleY[j] * g_fontUnitPx;
+		if (gh < 8.0f)
+			gh = 8.0f;
+		const float r = gh * 0.5f;
+		const float gx = menuX(m, m->worldPosX[j]), gy = menuWidgetY(m, j);
+		const u32 just = wj->hasJustify ? wj->justify : 0x5u;
+		const float cx = (just & 0x2u) ? gx - r : (just & 0x1u) ? gx : gx + r;
+		const float cy = (just & 0x4u) ? gy : (just & 0x8u) ? gy - r : gy + r;
+		if (cy + r < top || cy - r > top + th)
+			continue;              // on another line
+		if (cx >= left + tw * 0.5f)
+			continue;              // right of the word, not before it
+		const float edge = cx + r + 3.0f;
+		if (left >= edge)
+			continue;              // already clear of it
+		float hi = menuX(m, MENU_REF_W * 0.5f);
+		if (hi > m->screenW)
+			hi = m->screenW;
+		const float avail = hi - 2.0f - edge;
+		if (avail < 8.0f)
+			return;
+		if (tw > avail)
+			*scaleX *= avail / tw;
+		*align = C2D_AlignLeft;
+		*x = edge;
+		return;
+	}
+}
+
 static void drawMenu(const MenuState* m, int animFrame) {
 	const u64 now = osGetTime();
 	for (int oi = 0; oi < m->screen.widgetCount; oi++) {
@@ -30996,6 +31123,10 @@ static void drawMenu(const MenuState* m, int animFrame) {
 			u32 align = (just & 0x2u) ? C2D_AlignRight
 				: (just & 0x1u) ? C2D_AlignCenter
 				: C2D_AlignLeft;
+			// A one-line string kept inside the panel (menuFitTextX()); a
+			// wrapped one was already fitted to its box by computeTextWrap().
+			if (!wrapped && m->lineCount[i] <= 1)
+				textScaleX = menuFitTextX(m, &m->texts[i], align, x, textScaleX, textScale);
 			// With the game font, lines step by its pitch and the height the
 			// justification below works from is RenderString's own
 			// (0x8014c2c0): a string justified on 0x1 or 0x4 is its line count
@@ -31052,6 +31183,10 @@ static void drawMenu(const MenuState* m, int animFrame) {
 				}
 				x += gw * 2.4f;
 			}
+			// Clear of a button badge before it (menuAvoidPadGlyph()).
+			if (!wrapped && m->lineCount[i] <= 1 && m->padGlyphCount > 0 &&
+					!menuTurnedText(m, i))
+				menuAvoidPadGlyph(m, i, &align, &x, drawY, th, &textScaleX, textScale);
 			if (ff && m->lineCount[i] > 1) {
 				for (int k = 0; k < m->lineCount[i]; k++)
 					menuDrawTextXY(&m->linePool[m->lineFirst[i] + k], align, x,
@@ -52458,7 +52593,7 @@ static void rainTick(float dt) {
 	memcpy(in.camFwd, g_afxView.fwd, sizeof(in.camFwd));
 	in.worldTime = (float)g_worldTimer * 0.00025f;
 	in.playerDriven = true;
-	rain_update(dt, &in, g_dbgRain);
+	rain_update(dt, &in, g_rainMode > 0 ? kRainModeIntensity[g_rainMode] : g_dbgRain);
 	rainFogTick(dt);
 	// DbgLensHold (#406): freeze the lens drops that long into the rain.
 	static float lensRain;
@@ -52841,6 +52976,22 @@ static bool tuneBackdropVp(C3D_Mtx* out) {
 	return true;
 }
 
+// The C-Stick's look round the car (worldCamera()): how fast it turns at full
+// tilt, in radians a second (about 170 degrees), how long it holds the angle
+// once the stick is let go before gliding back behind the car, in seconds,
+// and the same up and down: how fast it climbs, and the lowest and highest
+// the eye may stand over the car, as an angle up from the road (just over the
+// tarmac to nearly straight down from above).
+#define CAM_ORBIT_RATE   3.0f
+#define CAM_ORBIT_HOLD_S 2.0f
+#define CAM_PITCH_RATE   1.5f
+#define CAM_PITCH_MIN    0.05f
+#define CAM_PITCH_MAX    1.48f
+// Below this speed (m/s) the view is left where the stick put it, however long
+// -- a parked car can be looked round at leisure, as in GTA; moving, it
+// settles back behind the car after the hold.
+#define CAM_RETURN_SPEED 3.0f
+
 static void worldCamera(C3D_Mtx* out, float aspect) {
 	// The Camera option is read every frame, so a change on the pause menu's
 	// options takes at once, the way Player::ChangeCameraMover swaps movers.
@@ -53022,12 +53173,87 @@ static void worldCamera(C3D_Mtx* out, float aspect) {
 	// instead, but only when RunTimePlayerSettings+0xB is clear, and the one
 	// write to it is ResetToDefaults' 1 (0x80225804).
 	const float back = g_lookBack ? -1.0f : 1.0f;
+	// PORT (the user, 2026-11-14): the New 3DS's C-Stick looks round the car
+	// in the chase views. Across, it turns the camera about the car's vertical
+	// all the way round, as long as it is held -- pushed right, the eye goes
+	// round to the car's left and looks right, at up to CAM_ORBIT_RATE -- and
+	// the view stays where it was left for CAM_ORBIT_HOLD_S before gliding
+	// back behind the car the short way round. Up and down it does the same
+	// over the car -- the eye climbs or dips round it at up to CAM_PITCH_RATE,
+	// from just over the road to nearly overhead, and stays there for the
+	// same hold before settling back. Not over a look-back, and not while the
+	// C-Stick is the hydraulics' (hydJoyHandler(): a level on, the stick its
+	// button). On an old 3DS hidCstickRead() reads nothing, so nothing moves.
+	static float s_camOrbit = 0.0f, s_camPitch = 0.0f, s_camIdle = 0.0f;
+	{
+		float turn = 0.0f, climb = 0.0f;
+		const bool hydStick = hydLevel() != 0 && g_hyd.allowed &&
+			(!g_cfgMain || g_cfgMain->hydButton == 0);
+		if (outside && !g_lookBack && !hydStick) {
+			circlePosition cs;
+			hidCstickRead(&cs);
+			const float sx = clamp1((float)cs.dx / HYD_CSTICK_FULL);
+			const float sy = clamp1((float)cs.dy / HYD_CSTICK_FULL);
+			// A small dead zone, so a stick resting off-centre does not drift.
+			if (fabsf(sx) > 0.12f)
+				turn = -sx;
+			if (fabsf(sy) > 0.12f)
+				climb = sy;
+		}
+		if (turn != 0.0f || climb != 0.0f) {
+			s_camOrbit += turn * CAM_ORBIT_RATE * dt;
+			s_camPitch += climb * CAM_PITCH_RATE * dt;
+			s_camIdle = 0.0f;
+		} else {
+			s_camIdle += dt;
+			// Back behind the car once the hold is over (or at once outside
+			// the chase views); the angle is kept in -pi..pi, so this is the
+			// short way round.
+			if ((s_camIdle >= CAM_ORBIT_HOLD_S && fabsf(g_sim.speed) > CAM_RETURN_SPEED) ||
+					!outside || g_lookBack) {
+				const float back3 = clampTo(dt * 3.0f, 0.0f, 1.0f);
+				s_camOrbit += (0.0f - s_camOrbit) * back3;
+				s_camPitch += (0.0f - s_camPitch) * back3;
+			}
+		}
+		if (s_camOrbit > (float)M_PI)
+			s_camOrbit -= 2.0f * (float)M_PI;
+		else if (s_camOrbit < -(float)M_PI)
+			s_camOrbit += 2.0f * (float)M_PI;
+		if (fabsf(s_camOrbit) < 1e-4f)
+			s_camOrbit = 0.0f;
+		if (fabsf(s_camPitch) < 1e-4f)
+			s_camPitch = 0.0f;
+	}
+	const float oc = cosf(s_camOrbit), os = sinf(s_camOrbit);
 	float target[3];
-	for (int k = 0; k < 3; k++) {
-		g_camPos[k] = o[k] + back * (f[k] * g_chase.eye[0].val + l[k] * g_chase.eye[1].val) +
-			u[k] * g_chase.eye[2].val;
-		target[k] = o[k] + back * (f[k] * g_chase.look[0].val + l[k] * g_chase.look[1].val) +
-			u[k] * g_chase.look[2].val;
+	{
+		// Both offsets turned in the frame's forward/left plane.
+		const float ex = back * g_chase.eye[0].val, ey = back * g_chase.eye[1].val;
+		const float lx = back * g_chase.look[0].val, ly = back * g_chase.look[1].val;
+		float erx = ex * oc - ey * os, ery = ex * os + ey * oc;
+		const float lrx = lx * oc - ly * os, lry = lx * os + ly * oc;
+		float ez = g_chase.eye[2].val;
+		// The climb: the eye swung up or down round the car at its own
+		// distance, its angle over the road held between the two limits (and
+		// the climb with it, so the stick does not wind up past them).
+		if (s_camPitch != 0.0f) {
+			const float hd = sqrtf(erx * erx + ery * ery);
+			const float R = sqrtf(hd * hd + ez * ez);
+			if (hd > 1e-3f && R > 1e-3f) {
+				const float base = atan2f(ez, hd);
+				const float e = clampTo(base + s_camPitch, CAM_PITCH_MIN, CAM_PITCH_MAX);
+				s_camPitch = e - base;
+				const float kk = R * cosf(e) / hd;
+				erx *= kk;
+				ery *= kk;
+				ez = R * sinf(e);
+			}
+		}
+		for (int k = 0; k < 3; k++) {
+			g_camPos[k] = o[k] + f[k] * erx + l[k] * ery + u[k] * ez;
+			target[k] = o[k] + f[k] * lrx + l[k] * lry + u[k] * g_chase.look[2].val;
+		}
 	}
 	// A view on the car takes the car's own up (Update 0x80072460), so it rolls
 	// with the body; a chase view keeps its smoothed tip with z at 1.
@@ -56039,7 +56265,121 @@ static void drawWorldCountdown(C2D_TextBuf buf) {
 		(WBOT_BANK_H - vh) * 0.5f, 0.5f, valueScale, valueScale, valueColor);
 }
 
+// Where the bank row's value ends and how it sits, for the pickup's
+// indicator (drawWorldBankReward()) to rise into: the full row's by default,
+// the corner plate's once drawWorldBankCompact() has drawn it.
+static float g_bankRowRight = BOTTOM_W - WBOT_BANK_PAD;
+static float g_bankRowY = 0.0f;
+static float g_bankRowH = WBOT_BANK_H;
+static float g_bankRowValuePx = WBOT_BANK_VALUE_PX;
+
+// PORT (the user, 2026-11-14): with the map filling the bottom screen in free
+// roam, the bank is a plate in its top-left corner, over the map, sized to
+// what it holds. The plates on this screen (bank, zoom, GPS) share one look:
+// a dark slate panel, a hairline round it and an accent bar down the left.
+#define WBOT_PLATE        C2D_Color32(16, 22, 30, 0xD8)
+#define WBOT_PLATE_LINE   C2D_Color32(96, 110, 124, 200)
+#define WBOT_ACCENT       C2D_Color32(138, 244, 202, 255)
+#define WBOT_INK          C2D_Color32(235, 240, 245, 255)
+#define WBOT_INK_DIM      C2D_Color32(150, 162, 176, 255)
+#define WBOT_INK_OFF      C2D_Color32(90, 100, 112, 230)
+#define WBOT_BANKC_X        4.0f
+#define WBOT_BANKC_Y        4.0f
+#define WBOT_BANKC_H       24.0f
+#define WBOT_BANKC_LABEL_PX 9.5f
+#define WBOT_BANKC_VALUE_PX 15.0f
+
+static void drawWorldPlate(float x, float y, float w, float h, float z, u32 accent) {
+	C2D_DrawRectSolid(x, y, z, w, h, WBOT_PLATE);
+	C2D_DrawRectSolid(x, y, z + 0.005f, w, 1.0f, WBOT_PLATE_LINE);
+	C2D_DrawRectSolid(x, y + h - 1.0f, z + 0.005f, w, 1.0f, WBOT_PLATE_LINE);
+	C2D_DrawRectSolid(x + w - 1.0f, y, z + 0.005f, 1.0f, h, WBOT_PLATE_LINE);
+	C2D_DrawRectSolid(x, y, z + 0.005f, 1.0f, h, WBOT_PLATE_LINE);
+	if (accent)
+		C2D_DrawRectSolid(x + 1.0f, y + 1.0f, z + 0.01f, 3.0f, h - 2.0f, accent);
+}
+
+// PORT (the user, 2026-11-15): the touch screen's layout, the player's own.
+// The eye (drawWorldTouchToggle()) runs it all: a tap hides or shows the
+// zoom, rain and messages buttons and the bank (the GPS bar stays, it is the
+// route); held, it opens the layout editor, where every
+// item -- the zoom pair, rain, messages, bank and the eye itself -- can be
+// dragged anywhere, and a tap turns one off or back on (the eye stays).
+// "Default" puts them all back. Each item keeps an offset from its first
+// place, so it still steps aside when the GPS bar comes up. Kept in
+// GameDir/touchui.txt, written only when a change ends. TouchToggle=0 in the
+// config takes all of it away.
+enum { TUI_ZOOM, TUI_RAIN, TUI_SMS, TUI_BANK, TUI_EYE, TUI_COUNT };
+static const char* const kTuiKey[TUI_COUNT] = { "Zoom", "Rain", "Sms", "Bank", "Eye" };
+static struct {
+	bool loaded, hidden, dirty, edit, custom, dragging;
+	int drag;   // the item the finger is on in the editor, -1 none
+	bool on[TUI_COUNT];
+	float off[TUI_COUNT][2];
+} g_tui = { false, false, false, false, false, false, -1,
+	{ true, true, true, true, true }, { { 0 } } };
+static bool g_tuiBase = false;    // the rect functions leave the offset out
+static float g_bankRect[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+// Moves n rects (one item) by its offset, as far as the screen allows.
+static void tuiOffset(int item, float (*r)[4], int n) {
+	if (g_tuiBase || !g_tui.custom || (item == TUI_ZOOM && g_raceRun.on))
+		return;
+	float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+	for (int i = 0; i < n; i++) {
+		if (r[i][0] < x0) x0 = r[i][0];
+		if (r[i][1] < y0) y0 = r[i][1];
+		if (r[i][0] + r[i][2] > x1) x1 = r[i][0] + r[i][2];
+		if (r[i][1] + r[i][3] > y1) y1 = r[i][1] + r[i][3];
+	}
+	float dx = g_tui.off[item][0], dy = g_tui.off[item][1];
+	if (x0 + dx < 0.0f) dx = -x0;
+	if (x1 + dx > BOTTOM_W) dx = BOTTOM_W - x1;
+	if (y0 + dy < 0.0f) dy = -y0;
+	if (y1 + dy > BOTTOM_H) dy = BOTTOM_H - y1;
+	for (int i = 0; i < n; i++) {
+		r[i][0] += dx;
+		r[i][1] += dy;
+	}
+}
+
+static void drawWorldBankCompact(C2D_TextBuf buf) {
+	char cash[32];
+	formatCashGrouped(gProfile.cash, cash, sizeof(cash));
+	const float labelScale = WBOT_BANKC_LABEL_PX / g_fontUnitPx;
+	const float valueScale = WBOT_BANKC_VALUE_PX / g_fontUnitPx;
+	C2D_Text label, value;
+	C2D_TextFontParse(&label, g_uiFont, buf, "BANK");
+	C2D_TextOptimize(&label);
+	C2D_TextFontParse(&value, g_uiFont, buf, cash);
+	C2D_TextOptimize(&value);
+	float lw = 0.0f, lh = 0.0f, vw = 0.0f, vh = 0.0f;
+	textDims(&label, labelScale, labelScale, &lw, &lh);
+	textDims(&value, valueScale, valueScale, &vw, &vh);
+	const float h = WBOT_BANKC_H;
+	const float w = 10.0f + lw + 6.0f + vw + 10.0f;
+	float br[4] = { WBOT_BANKC_X, WBOT_BANKC_Y, w, h };
+	tuiOffset(TUI_BANK, (float (*)[4])br, 1);
+	memcpy(g_bankRect, br, sizeof(br));
+	const float x = br[0], y = br[1];
+	const float lx = x + 10.0f, vx = lx + lw + 6.0f;
+	drawWorldPlate(x, y, w, h, 0.7f, WBOT_ACCENT);
+	// Both on one baseline: the label's bottom where the value's is.
+	const float vy = y + (h - vh) * 0.5f;
+	C2D_DrawText(&label, C2D_WithColor, lx, vy + vh - lh - 1.0f, 0.72f,
+		labelScale, labelScale, WBOT_INK_DIM);
+	C2D_DrawText(&value, C2D_WithColor, vx, vy, 0.72f, valueScale, valueScale, WBOT_INK);
+	g_bankRowRight = vx + vw;
+	g_bankRowY = y;
+	g_bankRowH = h;
+	g_bankRowValuePx = WBOT_BANKC_VALUE_PX;
+}
+
 static void drawWorldBank(C2D_TextBuf buf) {
+	g_bankRowRight = BOTTOM_W - WBOT_BANK_PAD;
+	g_bankRowY = 0.0f;
+	g_bankRowH = WBOT_BANK_H;
+	g_bankRowValuePx = WBOT_BANK_VALUE_PX;
 	// formatCashGrouped() is EA's own %$d: digit grouping with ',' every three
 	// and no currency symbol (SPEED2.EXE 0x43F618/0x43F5FC).
 	char cash[32];
@@ -56124,7 +56464,7 @@ static void drawWorldBankReward(C2D_TextBuf buf) {
 		on = false;
 		return;
 	}
-	const float k = WBOT_BANK_VALUE_PX / (38.0f * 0.6f);
+	const float k = g_bankRowValuePx / (38.0f * 0.6f);
 	float scale = 38.0f * bankRewardTrack(kBrSize, ms) * k / g_fontUnitPx;
 	const u8 a = (u8)bankRewardTrack(kBrAlpha, ms);
 	C2D_Text t;
@@ -56132,17 +56472,773 @@ static void drawWorldBankReward(C2D_TextBuf buf) {
 	C2D_TextOptimize(&t);
 	float w = 0.0f, h = 0.0f;
 	textDims(&t, scale, scale, &w, &h);
-	const float right = BOTTOM_W - WBOT_BANK_PAD +
+	const float right = g_bankRowRight +
 		(bankRewardTrack(kBrX, ms) - WBOT_BANK_VALUE_X) * k;
 	if (w > right - WBOT_BANK_PAD && w > 0.0f) {
 		scale *= (right - WBOT_BANK_PAD) / w;
 		w = right - WBOT_BANK_PAD;
 	}
 	// The value's line top as drawWorldBank places it, centred in the row.
-	const float valueTop = (WBOT_BANK_H - WBOT_BANK_VALUE_PX) * 0.5f;
+	const float valueTop = g_bankRowY + (g_bankRowH - g_bankRowValuePx) * 0.5f;
 	const float top = valueTop + (bankRewardTrack(kBrY, ms) - WBOT_BANK_VALUE_Y) * k;
 	C2D_DrawText(&t, C2D_WithColor, right - w, top, 0.7f, scale, scale,
 		C2D_Color32(202, 244, 138, a));
+}
+
+// PORT (the user, 2026-11-14): the touch screen's map controls, with stylus or
+// finger.
+//   * + and - down the right edge zoom the map (minimap_zoom_step()); a tap is
+//     a step, held it repeats, a button at its limit is greyed.
+//   * Held on the map for WBOT_PAN_HOLD_MS, the finger drags it
+//     (minimap_pan_by()); WBOT_PAN_RETURN_MS after it lifts, the view glides
+//     back onto the car.
+//   * A tap on an activity's marker starts the GPS on it -- GPSManager::Start,
+//     what the world map's Activate GPS does -- so the top screen's arrow
+//     points the way, and a GPS bar along the bottom names it, with its
+//     distance, which way it lies and an x that stops the GPS.
+#define WBOT_ZOOM_BTN       26.0f
+#define WBOT_ZOOM_GAP        4.0f
+#define WBOT_EDGE            4.0f
+#define WBOT_ZOOM_HOLD_MS  400u
+#define WBOT_ZOOM_REPEAT_MS 110u
+#define WBOT_PAN_HOLD_MS    350u
+#define WBOT_PAN_RETURN_MS 3000u
+#define WBOT_PAN_EASE      0.85f
+#define WBOT_TAP_SLOP        8
+#define WBOT_TAP_RADIUS     14.0f
+#define WBOT_GPS_H          30.0f
+#define WBOT_GPS_CLOSE      22.0f
+
+// PORT (the user, 2026-11-14): the messages, top-right of the touch screen in
+// free roam -- an envelope and the unread count (sms_count_unread()). A tap
+// opens the Cingular mailbox, as the D-Pad's Display SMS does: the world loop
+// takes g_smsBadgeTap as that press on its next frame.
+#define WBOT_SMS_W 50.0f
+static bool g_smsBadgeTap = false;
+
+static void worldSmsBadgeRect(float mapX, float mapY, float mapW, float r[4]) {
+	r[0] = mapX + mapW - WBOT_EDGE - WBOT_SMS_W;
+	r[1] = mapY + WBOT_BANKC_Y;
+	r[2] = WBOT_SMS_W;
+	r[3] = WBOT_BANKC_H;
+	tuiOffset(TUI_SMS, (float (*)[4])r, 1);
+}
+
+static void drawWorldSmsBadge(C2D_TextBuf buf, float mapX, float mapY, float mapW) {
+	float r[4];
+	worldSmsBadgeRect(mapX, mapY, mapW, r);
+	const unsigned int unread = sms_count_unread(&gProfile);
+	const u32 ink = unread ? WBOT_ACCENT : WBOT_INK_DIM;
+	drawWorldPlate(r[0], r[1], r[2], r[3], 0.7f, unread ? WBOT_ACCENT : 0);
+	// The envelope: a box and its flap.
+	const float ew = 16.0f, eh = 11.0f;
+	const float ex = r[0] + 9.0f, ey = r[1] + (r[3] - eh) * 0.5f;
+	C2D_DrawRectSolid(ex, ey, 0.72f, ew, 1.5f, ink);
+	C2D_DrawRectSolid(ex, ey + eh - 1.5f, 0.72f, ew, 1.5f, ink);
+	C2D_DrawRectSolid(ex, ey, 0.72f, 1.5f, eh, ink);
+	C2D_DrawRectSolid(ex + ew - 1.5f, ey, 0.72f, 1.5f, eh, ink);
+	C2D_DrawLine(ex + 1.0f, ey + 1.0f, ink, ex + ew * 0.5f, ey + eh * 0.6f, ink, 1.5f, 0.73f);
+	C2D_DrawLine(ex + ew - 1.0f, ey + 1.0f, ink, ex + ew * 0.5f, ey + eh * 0.6f, ink, 1.5f, 0.73f);
+	char n[8];
+	if (unread > 99)
+		snprintf(n, sizeof(n), "99+");
+	else
+		snprintf(n, sizeof(n), "%u", unread);
+	const float sc = 15.0f / g_fontUnitPx;
+	C2D_Text t;
+	C2D_TextFontParse(&t, g_uiFont, buf, n);
+	C2D_TextOptimize(&t);
+	float tw = 0.0f, th = 0.0f;
+	textDims(&t, sc, sc, &tw, &th);
+	const float room = r[0] + r[2] - 6.0f - (ex + ew + 5.0f);
+	const float sx = (tw > room && tw > 0.0f) ? sc * room / tw : sc;
+	C2D_DrawText(&t, C2D_WithColor, ex + ew + 5.0f, r[1] + (r[3] - th) * 0.5f, 0.72f, sx, sc,
+		unread ? WBOT_INK : WBOT_INK_DIM);
+}
+
+// The rain button, bottom-left of the map: a tap steps the weather through
+// its own, dry, light rain and heavy rain (g_rainMode). The icon says which:
+// a cloud with an A, a dim cloud, two drops, four drops.
+#define WBOT_RAIN_BTN 26.0f
+
+static void worldRainRect(float mapX, float mapY, float mapH, bool gpsBar, float r[4]) {
+	const float bottom = mapY + mapH - (gpsBar ? WBOT_GPS_H + WBOT_EDGE : 0.0f);
+	r[0] = mapX + WBOT_EDGE;
+	r[1] = bottom - WBOT_EDGE - WBOT_RAIN_BTN;
+	r[2] = WBOT_RAIN_BTN;
+	r[3] = WBOT_RAIN_BTN;
+	tuiOffset(TUI_RAIN, (float (*)[4])r, 1);
+}
+
+static void worldRainCycle(void) {
+	g_rainMode = (g_rainMode + 1) % 4;
+	static const char* const kName[4] = { "the weather's own", "dry", "light rain", "heavy rain" };
+	char b[96];
+	snprintf(b, sizeof(b), "rain button: %s", kName[g_rainMode]);
+	dlog(b);
+}
+
+static void drawWorldRainButton(float mapX, float mapY, float mapH, bool gpsBar) {
+	float r[4];
+	worldRainRect(mapX, mapY, mapH, gpsBar, r);
+	drawWorldPlate(r[0], r[1], r[2], r[3], 0.7f, g_rainMode >= 2 ? WBOT_ACCENT : 0);
+	const u32 ink = g_rainMode == 1 ? WBOT_INK_OFF : WBOT_INK;
+	const u32 drop = C2D_Color32(120, 190, 255, 255);
+	// The cloud: three puffs on a flat base, in the button's upper half.
+	const float cx = r[0] + r[2] * 0.5f + 1.0f, cy = r[1] + r[3] * 0.40f;
+	C2D_DrawCircleSolid(cx - 4.5f, cy + 1.0f, 0.72f, 3.6f, ink);
+	C2D_DrawCircleSolid(cx + 0.5f, cy - 1.5f, 0.72f, 4.8f, ink);
+	C2D_DrawCircleSolid(cx + 5.0f, cy + 1.2f, 0.72f, 3.4f, ink);
+	C2D_DrawRectSolid(cx - 7.5f, cy + 1.0f, 0.72f, 15.5f, 3.6f, ink);
+	// Under it: the drops, or the A of the weather's own.
+	const int drops = g_rainMode == 2 ? 2 : g_rainMode == 3 ? 4 : 0;
+	const float dy = cy + 7.0f;
+	for (int k = 0; k < drops; k++) {
+		const float dx = cx - (float)(drops - 1) * 2.5f + (float)k * 5.0f;
+		C2D_DrawLine(dx + 1.2f, dy, drop, dx - 0.6f, dy + 5.0f, drop, 1.6f, 0.73f);
+	}
+	if (g_rainMode == 0) {
+		const float ax = cx, ay = dy + 0.5f;
+		C2D_DrawLine(ax - 3.0f, ay + 6.0f, WBOT_ACCENT, ax, ay, WBOT_ACCENT, 1.6f, 0.73f);
+		C2D_DrawLine(ax + 3.0f, ay + 6.0f, WBOT_ACCENT, ax, ay, WBOT_ACCENT, 1.6f, 0.73f);
+		C2D_DrawLine(ax - 1.6f, ay + 3.6f, WBOT_ACCENT, ax + 1.6f, ay + 3.6f, WBOT_ACCENT, 1.4f, 0.73f);
+	}
+}
+
+// The GPS bar's rect, and its x's, along the bottom of the map panel.
+static void worldGpsRects(float mapX, float mapY, float mapW, float mapH, float bar[4],
+		float close[4]) {
+	bar[0] = mapX + WBOT_EDGE;
+	bar[1] = mapY + mapH - WBOT_EDGE - WBOT_GPS_H;
+	bar[2] = mapW - 2.0f * WBOT_EDGE;
+	bar[3] = WBOT_GPS_H;
+	close[0] = bar[0] + bar[2] - 4.0f - WBOT_GPS_CLOSE;
+	close[1] = bar[1] + (WBOT_GPS_H - WBOT_GPS_CLOSE) * 0.5f;
+	close[2] = WBOT_GPS_CLOSE;
+	close[3] = WBOT_GPS_CLOSE;
+}
+
+// The two zoom buttons' rects, [0] + and [1] -, down the right edge, centred
+// on what the GPS bar leaves of the panel; in a race, side by side in the
+// bottom-left corner, clear of the stats column.
+static void worldZoomRects(float mapX, float mapY, float mapW, float mapH, bool gpsBar,
+		float r[2][4]) {
+	if (g_raceRun.on) {
+		// A race: the stats column has the right side, so - and + sit side by
+		// side in the bottom-left corner.
+		const float y = mapY + mapH - WBOT_EDGE - WBOT_ZOOM_BTN;
+		r[1][0] = mapX + WBOT_EDGE;                                 r[1][1] = y;
+		r[0][0] = mapX + WBOT_EDGE + WBOT_ZOOM_BTN + WBOT_ZOOM_GAP; r[0][1] = y;
+		r[0][2] = r[1][2] = WBOT_ZOOM_BTN;
+		r[0][3] = r[1][3] = WBOT_ZOOM_BTN;
+		return;
+	}
+	const float bottom = mapY + mapH - (gpsBar ? WBOT_GPS_H + WBOT_EDGE : 0.0f);
+	const float x = mapX + mapW - WBOT_EDGE - WBOT_ZOOM_BTN;
+	const float mid = (mapY + bottom) * 0.5f;
+	r[0][0] = x; r[0][1] = mid - WBOT_ZOOM_GAP * 0.5f - WBOT_ZOOM_BTN;
+	r[1][0] = x; r[1][1] = mid + WBOT_ZOOM_GAP * 0.5f;
+	r[0][2] = r[1][2] = WBOT_ZOOM_BTN;
+	r[0][3] = r[1][3] = WBOT_ZOOM_BTN;
+	tuiOffset(TUI_ZOOM, r, 2);
+}
+
+static bool worldInRect(float px, float py, const float r[4]) {
+	return px >= r[0] && px < r[0] + r[2] && py >= r[1] && py < r[1] + r[3];
+}
+
+// Which of the minimap's markers the GPS is on, as an index into g_markers;
+// -1 for none (or a target no marker stands for).
+static int worldGpsMarker(void) {
+	const int st = gps_status();
+	if (st < GPS_STATUS_SEARCHING || st > GPS_STATUS_ACTIVE)
+		return -1;
+	for (int i = 0; i < g_markerCount; i++) {
+		if (!g_markerZone[i])
+			continue;
+		float target[3], icon[2];
+		gpsZoneTarget(g_markerZone[i], target, icon);
+		if (gps_is_target(target))
+			return i;
+	}
+	return -1;
+}
+
+// The activity's name for the GPS bar: GetTriggerZoneHash's legend text for
+// its zone type -- "Drag", "Circuit", "Body Shop" -- in the chosen language,
+// looked up once per type.
+static const char* worldGpsName(const Config* cfg, u8 element) {
+	static int cachedType = -2;
+	static char name[64];
+	const int type = gmZoneTypeForElement(element);
+	if (type == cachedType && name[0])
+		return name;
+	cachedType = type;
+	name[0] = '\0';
+	if (cfg && type >= 0 && type < GAMEMAP_FILTERS) {
+		char path[600];
+		LangTable lang;
+		if (buildGamePath(cfg, "LANGUAGES/English.bin", path, sizeof(path)) &&
+				langbin_load(path, &lang)) {
+			const char* s = langbin_lookup(&lang, GM_STRING_IDS[GMS_ZONE0 + type]);
+			if (s)
+				langTextToUtf8(s, name, sizeof(name));
+			langbin_free(&lang);
+		}
+	}
+	if (!name[0])
+		snprintf(name, sizeof(name), "%s", "GPS");
+	return name;
+}
+
+// A tap on the map: the marker under it, if it stands for a zone, becomes the
+// GPS's target.
+static void worldMapTapSelect(float px, float py) {
+	float wx = 0.0f, wy = 0.0f;
+	u8 el = 0;
+	if (g_raceRun.on || !gps_loaded() ||
+			!minimap_marker_at(g_minimap, px, py, WBOT_TAP_RADIUS, &wx, &wy, &el))
+		return;
+	for (int i = 0; i < g_markerCount; i++) {
+		if (!g_markerZone[i] || g_markers[i].worldX != wx || g_markers[i].worldY != wy)
+			continue;
+		float target[3], icon[2];
+		gpsZoneTarget(g_markerZone[i], target, icon);
+		if (gps_is_target(target))
+			return;
+		GpsCar car;
+		gpsCarFrom(&car);
+		gps_start(&car, target, icon);
+		char b[160];
+		snprintf(b, sizeof(b), "minimap: tap on element %d -> GPSManager::Start at %.0f,%.0f,%.0f",
+			(int)el, target[0], target[1], target[2]);
+		dlog(b);
+		return;
+	}
+}
+
+static void worldGpsUnitRect(const float close[4], float r[4]);
+static void worldGpsUnitToggle(void);
+
+#define WBOT_TOGGLE_BTN        26.0f
+#define WBOT_TUI_EDIT_HOLD_MS  600u
+#define WBOT_TUI_BAR_H         30.0f
+static bool g_tuiGpsBar = false;   // the GPS bar's up: the rects step aside
+
+static void worldToggleRect(float r[4]) {
+	r[0] = (BOTTOM_W - WBOT_TOGGLE_BTN) * 0.5f;   // top centre, clear of bank and messages
+	r[1] = WBOT_EDGE;
+	r[2] = WBOT_TOGGLE_BTN;
+	r[3] = WBOT_TOGGLE_BTN;
+	tuiOffset(TUI_EYE, (float (*)[4])r, 1);
+}
+
+// One item's rect on screen (the zoom pair's both), as drawn.
+static void tuiItemRect(int item, float r[4]) {
+	switch (item) {
+	case TUI_ZOOM: {
+		float z[2][4];
+		worldZoomRects(0.0f, 0.0f, BOTTOM_W, BOTTOM_H, g_tuiGpsBar, z);
+		r[0] = z[0][0];
+		r[1] = z[0][1];
+		r[2] = z[0][2];
+		r[3] = z[1][1] + z[1][3] - z[0][1];
+		break;
+	}
+	case TUI_RAIN: worldRainRect(0.0f, 0.0f, BOTTOM_H, g_tuiGpsBar, r); break;
+	case TUI_SMS: worldSmsBadgeRect(0.0f, 0.0f, BOTTOM_W, r); break;
+	case TUI_BANK:
+		r[0] = WBOT_BANKC_X;
+		r[1] = WBOT_BANKC_Y;
+		r[2] = g_bankRect[2] > 0.0f ? g_bankRect[2] : 80.0f;
+		r[3] = WBOT_BANKC_H;
+		tuiOffset(TUI_BANK, (float (*)[4])r, 1);
+		break;
+	default: worldToggleRect(r); break;
+	}
+}
+
+// After a drag: the offset trimmed to what the screen let it reach.
+static void tuiReclamp(int item) {
+	float cur[4], base[4];
+	tuiItemRect(item, cur);
+	g_tuiBase = true;
+	tuiItemRect(item, base);
+	g_tuiBase = false;
+	g_tui.off[item][0] = cur[0] - base[0];
+	g_tui.off[item][1] = cur[1] - base[1];
+}
+
+static void tuiDefaults(void) {
+	for (int i = 0; i < TUI_COUNT; i++) {
+		g_tui.on[i] = true;
+		g_tui.off[i][0] = g_tui.off[i][1] = 0.0f;
+	}
+}
+
+static void touchUiLoad(const Config* cfg) {
+	g_tui.loaded = true;
+	char path[600];
+	FILE* f = NULL;
+	if (cfg && buildGamePath(cfg, "touchui.txt", path, sizeof(path)))
+		f = fopen(path, "r");
+	if (!f)
+		return;
+	char line[96];
+	while (fgets(line, sizeof(line), f)) {
+		if (strncmp(line, "Hidden=", 7) == 0) {
+			g_tui.hidden = atoi(line + 7) != 0;
+			continue;
+		}
+		// Item=on,dx,dy
+		for (int i = 0; i < TUI_COUNT; i++) {
+			const size_t kl = strlen(kTuiKey[i]);
+			if (strncmp(line, kTuiKey[i], kl) != 0 || line[kl] != '=')
+				continue;
+			char* p = line + kl + 1;
+			g_tui.on[i] = strtol(p, &p, 10) != 0 || i == TUI_EYE;
+			if (*p == ',') g_tui.off[i][0] = (float)strtol(p + 1, &p, 10);
+			if (*p == ',') g_tui.off[i][1] = (float)strtol(p + 1, &p, 10);
+		}
+	}
+	fclose(f);
+}
+
+static void touchUiSave(const Config* cfg) {
+	char path[600];
+	if (!cfg || !buildGamePath(cfg, "touchui.txt", path, sizeof(path)))
+		return;
+	FILE* f = fopen(path, "w");
+	if (!f)
+		return;
+	fprintf(f, "Hidden=%d\n", g_tui.hidden ? 1 : 0);
+	for (int i = 0; i < TUI_COUNT; i++)
+		fprintf(f, "%s=%d,%d,%d\n", kTuiKey[i], g_tui.on[i] ? 1 : 0,
+			(int)(g_tui.off[i][0] + (g_tui.off[i][0] < 0 ? -0.5f : 0.5f)),
+			(int)(g_tui.off[i][1] + (g_tui.off[i][1] < 0 ? -0.5f : 0.5f)));
+	fclose(f);
+}
+
+// The editor's bar along the bottom: [0] Default, [1] OK.
+static void tuiBarRects(float r[2][4]) {
+	const float y = BOTTOM_H - WBOT_EDGE - WBOT_TUI_BAR_H;
+	r[1][2] = 44.0f;
+	r[1][0] = BOTTOM_W - WBOT_EDGE - 3.0f - r[1][2];
+	r[0][2] = 66.0f;
+	r[0][0] = r[1][0] - 4.0f - r[0][2];
+	r[0][1] = r[1][1] = y + 3.0f;
+	r[0][3] = r[1][3] = WBOT_TUI_BAR_H - 6.0f;
+}
+
+static void drawWorldTouchToggle(void) {
+	float r[4];
+	worldToggleRect(r);
+	const float x = r[0], y = r[1], s = r[2];
+	drawWorldPlate(x, y, s, s, 0.74f, g_tui.edit ? WBOT_ACCENT : 0);
+	const u32 ink = g_tui.hidden && !g_tui.edit ? WBOT_INK_DIM : WBOT_INK;
+	const u32 hole = C2D_Color32(16, 22, 30, 255);
+	// The eye: a ring and its pupil; struck through while the buttons hide.
+	const float cx = x + s * 0.5f + 1.0f, cy = y + s * 0.5f;
+	const float ew = 16.0f, eh = 10.0f;
+	C2D_DrawEllipseSolid(cx - ew * 0.5f, cy - eh * 0.5f, 0.76f, ew, eh, ink);
+	C2D_DrawEllipseSolid(cx - ew * 0.5f + 1.6f, cy - eh * 0.5f + 1.6f, 0.77f,
+		ew - 3.2f, eh - 3.2f, hole);
+	C2D_DrawCircleSolid(cx, cy, 0.78f, 2.4f, ink);
+	if (g_tui.hidden && !g_tui.edit) {
+		C2D_DrawLine(cx - 8.0f, cy + 6.0f, hole, cx + 8.0f, cy - 6.0f, hole, 4.0f, 0.785f);
+		C2D_DrawLine(cx - 8.0f, cy + 6.0f, ink, cx + 8.0f, cy - 6.0f, ink, 1.8f, 0.79f);
+	}
+}
+
+// The editor, over everything: each item outlined, the ones turned off
+// dimmed and struck through, and the bar with its hint, Default and OK.
+static void drawWorldTuiEdit(C2D_TextBuf buf, const Config* cfg) {
+	const u32 off = C2D_Color32(8, 10, 14, 0xB8);
+	const u32 strike = C2D_Color32(240, 96, 96, 255);
+	for (int i = 0; i < TUI_COUNT; i++) {
+		float r[4];
+		tuiItemRect(i, r);
+		const u32 line = g_tui.drag == i ? WBOT_INK : WBOT_ACCENT;
+		C2D_DrawRectSolid(r[0] - 1.0f, r[1] - 1.0f, 0.82f, r[2] + 2.0f, 1.0f, line);
+		C2D_DrawRectSolid(r[0] - 1.0f, r[1] + r[3], 0.82f, r[2] + 2.0f, 1.0f, line);
+		C2D_DrawRectSolid(r[0] - 1.0f, r[1], 0.82f, 1.0f, r[3], line);
+		C2D_DrawRectSolid(r[0] + r[2], r[1], 0.82f, 1.0f, r[3], line);
+		if (!g_tui.on[i]) {
+			C2D_DrawRectSolid(r[0], r[1], 0.8f, r[2], r[3], off);
+			C2D_DrawLine(r[0] + 3.0f, r[1] + r[3] - 3.0f, strike,
+				r[0] + r[2] - 3.0f, r[1] + 3.0f, strike, 2.0f, 0.81f);
+		}
+	}
+	// The hint and Default in the chosen language (cfg->language, the
+	// LANGUAGES/<name>.bin it loads); English for anything else.
+	static const struct { const char* lang; const char* hint; const char* def; } kTuiText[] = {
+		{ "French", "Glisser : d\xC3\xA9placer\nToucher : activer / d\xC3\xA9sactiver", "D\xC3\xA9" "faut" },
+		{ "German", "Ziehen: verschieben\nTippen: ein / aus", "Standard" },
+		{ "Italian", "Trascina: sposta\nTocca: attiva / disattiva", "Predefinito" },
+		{ "Spanish", "Arrastrar: mover\nTocar: activar / desactivar", "Por defecto" },
+		{ "Dutch", "Slepen: verplaatsen\nTikken: aan / uit", "Standaard" },
+		{ "Swedish", "Dra: flytta\nTryck: p\xC3\xA5 / av", "Standard" },
+		{ "Danish", "Tr\xC3\xA6k: flyt\nTryk: til / fra", "Standard" },
+	};
+	const char* hint = "Drag: move\nTap: turn on / off";
+	const char* defLabel = "Default";
+	for (size_t i = 0; cfg && i < sizeof(kTuiText) / sizeof(kTuiText[0]); i++)
+		if (strcmp(cfg->language, kTuiText[i].lang) == 0) {
+			hint = kTuiText[i].hint;
+			defLabel = kTuiText[i].def;
+			break;
+		}
+	const float by = BOTTOM_H - WBOT_EDGE - WBOT_TUI_BAR_H;
+	drawWorldPlate(WBOT_EDGE, by, BOTTOM_W - 2.0f * WBOT_EDGE, WBOT_TUI_BAR_H, 0.84f, WBOT_ACCENT);
+	float b[2][4];
+	tuiBarRects(b);
+	const char* label[2] = { defLabel, "OK" };
+	const float hs = 9.5f / g_fontUnitPx, ls = 12.0f / g_fontUnitPx;
+	C2D_Text t;
+	float tw = 0.0f, th = 0.0f;
+	C2D_TextFontParse(&t, g_uiFont, buf, hint);
+	C2D_TextOptimize(&t);
+	textDims(&t, hs, hs, &tw, &th);
+	const float room = b[0][0] - 8.0f - (WBOT_EDGE + 10.0f);
+	const float hsx = (tw > room && tw > 0.0f) ? hs * room / tw : hs;
+	C2D_DrawText(&t, C2D_WithColor, WBOT_EDGE + 10.0f, by + (WBOT_TUI_BAR_H - th) * 0.5f, 0.86f,
+		hsx, hs, WBOT_INK_DIM);
+	for (int k = 0; k < 2; k++) {
+		drawWorldPlate(b[k][0], b[k][1], b[k][2], b[k][3], 0.87f, k == 1 ? WBOT_ACCENT : 0);
+		C2D_TextFontParse(&t, g_uiFont, buf, label[k]);
+		C2D_TextOptimize(&t);
+		textDims(&t, ls, ls, &tw, &th);
+		// A longer word ("Predefinito") narrows to the button, as menuFitTextX does.
+		const float lroom = b[k][2] - 10.0f;
+		const float lsx = (tw > lroom && tw > 0.0f) ? ls * lroom / tw : ls;
+		if (lsx < ls)
+			tw = lroom;
+		C2D_DrawText(&t, C2D_WithColor, b[k][0] + (b[k][2] - tw) * 0.5f + (k == 1 ? 1.5f : 0.0f),
+			b[k][1] + (b[k][3] - th) * 0.5f, 0.89f, lsx, ls, WBOT_INK);
+	}
+}
+
+// The editor's touch: drag an item to move it, tap one to turn it off or on,
+// tap the eye or OK to leave, Default to put everything back.
+static void worldTuiEditTouch(void) {
+	static int lastX = 0, lastY = 0, downX = 0, downY = 0;
+	const u32 held = hidKeysHeld();
+	if (!(held & KEY_TOUCH)) {
+		if (g_tui.drag >= 0) {
+			if (!g_tui.dragging) {
+				if (g_tui.drag == TUI_EYE) {
+					g_tui.edit = false;
+					dlog("touch layout: editor closed");
+				} else {
+					g_tui.on[g_tui.drag] = !g_tui.on[g_tui.drag];
+				}
+			}
+			g_tui.dirty = true;
+		}
+		g_tui.drag = -1;
+		g_tui.dragging = false;
+		return;
+	}
+	touchPosition tp;
+	hidTouchRead(&tp);
+	const float px = (float)tp.px, py = (float)tp.py;
+	if (hidKeysDown() & KEY_TOUCH) {
+		lastX = downX = tp.px;
+		lastY = downY = tp.py;
+		g_tui.drag = -1;
+		g_tui.dragging = false;
+		float b[2][4];
+		tuiBarRects(b);
+		if (worldInRect(px, py, b[0])) {
+			tuiDefaults();
+			g_tui.dirty = true;
+			dlog("touch layout: back to the defaults");
+			return;
+		}
+		if (worldInRect(px, py, b[1])) {
+			g_tui.edit = false;
+			g_tui.dirty = true;
+			dlog("touch layout: editor closed");
+			return;
+		}
+		static const int kOrder[TUI_COUNT] = { TUI_EYE, TUI_SMS, TUI_BANK, TUI_RAIN, TUI_ZOOM };
+		for (int k = 0; k < TUI_COUNT; k++) {
+			float r[4];
+			tuiItemRect(kOrder[k], r);
+			if (worldInRect(px, py, r)) {
+				g_tui.drag = kOrder[k];
+				break;
+			}
+		}
+		return;
+	}
+	if (g_tui.drag < 0)
+		return;
+	if (!g_tui.dragging && (abs(tp.px - downX) > WBOT_TAP_SLOP || abs(tp.py - downY) > WBOT_TAP_SLOP))
+		g_tui.dragging = true;
+	if (g_tui.dragging) {
+		g_tui.off[g_tui.drag][0] += (float)(tp.px - lastX);
+		g_tui.off[g_tui.drag][1] += (float)(tp.py - lastY);
+		tuiReclamp(g_tui.drag);
+	}
+	lastX = tp.px;
+	lastY = tp.py;
+}
+
+static void worldMapTouch(float mapX, float mapY, float mapW, float mapH, bool gpsBar,
+		bool smsBadge, bool rainBtn, bool toggleOn) {
+	static int holdDir = 0;
+	static u64 holdT0 = 0, lastStep = 0, releasedAt = 0;
+	static bool onMap = false, panning = false, onToggle = false;
+	static int lastX = 0, lastY = 0, downX = 0, downY = 0;
+	if (!g_minimap)
+		return;
+	g_tuiGpsBar = gpsBar;
+	if (g_tui.edit) {
+		onMap = panning = onToggle = false;
+		holdDir = 0;
+		worldTuiEditTouch();
+		return;
+	}
+	// The eye's tap hides the buttons; the layout turns any of them off.
+	const bool btns = !(toggleOn && g_tui.hidden);
+	const bool zoomOn = btns && (!toggleOn || g_tui.on[TUI_ZOOM]);
+	smsBadge = smsBadge && btns && (!toggleOn || g_tui.on[TUI_SMS]);
+	rainBtn = rainBtn && btns && (!toggleOn || g_tui.on[TUI_RAIN]);
+	const u32 held = hidKeysHeld();
+	const u64 now = osGetTime();
+	if (!(held & KEY_TOUCH)) {
+		if (onToggle) {
+			g_tui.hidden = !g_tui.hidden;
+			g_tui.dirty = true;
+			onToggle = false;
+			dlog(g_tui.hidden ? "minimap: eye -> touch buttons hidden"
+				: "minimap: eye -> touch buttons shown");
+		}
+		if (onMap && !panning && abs(lastX - downX) <= WBOT_TAP_SLOP &&
+				abs(lastY - downY) <= WBOT_TAP_SLOP)
+			worldMapTapSelect((float)downX, (float)downY);
+		if (onMap || panning)
+			releasedAt = now;
+		holdDir = 0;
+		onMap = false;
+		panning = false;
+		// Back onto the car once the finger has been off long enough.
+		if (minimap_is_panned(g_minimap) && now - releasedAt >= WBOT_PAN_RETURN_MS)
+			minimap_pan_ease(g_minimap, WBOT_PAN_EASE);
+		return;
+	}
+	// hidTouchRead reads 0,0 only on the frame the finger lifts, which the
+	// branch above has already taken.
+	touchPosition tp;
+	hidTouchRead(&tp);
+	const float px = (float)tp.px, py = (float)tp.py;
+	float zr[2][4], bar[4], close[4];
+	worldZoomRects(mapX, mapY, mapW, mapH, gpsBar, zr);
+	worldGpsRects(mapX, mapY, mapW, mapH, bar, close);
+	int dir = 0;
+	for (int k = 0; k < 2 && zoomOn; k++)
+		if (worldInRect(px, py, zr[k]))
+			dir = k == 0 ? 1 : -1;
+	float tg[4];
+	worldToggleRect(tg);
+	if (toggleOn && (hidKeysDown() & KEY_TOUCH) && worldInRect(px, py, tg)) {
+		// The eye first: it can sit over anything, wherever it was put.
+		onToggle = true;
+		holdDir = 0;
+		onMap = false;
+		panning = false;
+		holdT0 = now;
+		downX = tp.px;
+		downY = tp.py;
+		return;
+	}
+	if (onToggle) {
+		if (abs(tp.px - downX) > WBOT_TAP_SLOP || abs(tp.py - downY) > WBOT_TAP_SLOP) {
+			onToggle = false;   // slid off: neither a tap nor a hold
+		} else if (now - holdT0 >= WBOT_TUI_EDIT_HOLD_MS && !g_raceRun.on) {
+			// Held: the layout editor, on the finger's next touch.
+			onToggle = false;
+			g_tui.edit = true;
+			g_tui.drag = -1;
+			g_tui.dragging = false;
+			dlog("touch layout: editor open");
+		}
+		return;
+	}
+	if (hidKeysDown() & KEY_TOUCH) {
+		holdDir = dir;
+		holdT0 = now;
+		lastStep = now;
+		panning = false;
+		onMap = false;
+		lastX = downX = tp.px;
+		lastY = downY = tp.py;
+		float sms[4], rain[4], unitR[4];
+		worldSmsBadgeRect(mapX, mapY, mapW, sms);
+		worldRainRect(mapX, mapY, mapH, gpsBar, rain);
+		worldGpsUnitRect(close, unitR);
+		if (dir) {
+			minimap_zoom_step(g_minimap, dir);
+		} else if (rainBtn && worldInRect(px, py, rain)) {
+			worldRainCycle();
+		} else if (smsBadge && worldInRect(px, py, sms)) {
+			g_smsBadgeTap = true;
+			dlog("minimap: messages badge -> the mailbox");
+		} else if (gpsBar && worldInRect(px, py, close)) {
+			gps_stop();
+			dlog("minimap: GPS bar x -> GPSManager::Stop");
+		} else if (gpsBar && worldInRect(px, py, unitR)) {
+			worldGpsUnitToggle();
+		} else if (!(gpsBar && worldInRect(px, py, bar))) {
+			onMap = px >= mapX && px < mapX + mapW && py >= mapY && py < mapY + mapH;
+		}
+		return;
+	}
+	if (holdDir) {
+		if (dir == holdDir && now - holdT0 >= WBOT_ZOOM_HOLD_MS &&
+				now - lastStep >= WBOT_ZOOM_REPEAT_MS) {
+			minimap_zoom_step(g_minimap, dir);
+			lastStep = now;
+		}
+		return;
+	}
+	if (onMap) {
+		if (!panning && now - holdT0 >= WBOT_PAN_HOLD_MS)
+			panning = true;
+		if (panning)
+			minimap_pan_by(g_minimap, (float)(tp.px - lastX), (float)(tp.py - lastY));
+		lastX = tp.px;
+		lastY = tp.py;
+	}
+}
+
+static void drawWorldZoomButtons(float mapX, float mapY, float mapW, float mapH, bool gpsBar) {
+	float r[2][4];
+	worldZoomRects(mapX, mapY, mapW, mapH, gpsBar, r);
+	for (int k = 0; k < 2; k++) {
+		const bool off = minimap_zoom_at_limit(g_minimap, k == 0 ? 1 : -1);
+		const float x = r[k][0], y = r[k][1], s = r[k][2];
+		drawWorldPlate(x, y, s, s, 0.7f, 0);
+		// The signs as bars, not glyphs: crisp and centred at any size.
+		const u32 ink = off ? WBOT_INK_OFF : WBOT_INK;
+		const float len = s * 0.46f, th = 2.5f;
+		const float cx = x + s * 0.5f, cy = y + s * 0.5f;
+		C2D_DrawRectSolid(cx - len * 0.5f, cy - th * 0.5f, 0.72f, len, th, ink);
+		if (k == 0)
+			C2D_DrawRectSolid(cx - th * 0.5f, cy - len * 0.5f, 0.72f, th, len, ink);
+	}
+}
+
+// The GPS bar, on one line: GPS and the activity's name on the left; on the
+// right a chip with which way it lies and how far, then the x. A tap on the
+// chip switches the distance between kilometres and miles for the GPS alone
+// (g_gpsUnits); until then it follows the speedometer's units.
+#define WBOT_GPS_UNIT_W 78.0f
+static int g_gpsUnits = -1;   // -1 the speedometer's, 1 metric, 0 imperial
+
+static bool worldGpsMetric(void) {
+	return g_gpsUnits < 0 ? unitsMetric() : g_gpsUnits == 1;
+}
+
+static void worldGpsUnitRect(const float close[4], float r[4]) {
+	r[0] = close[0] - 4.0f - WBOT_GPS_UNIT_W;
+	r[1] = close[1];
+	r[2] = WBOT_GPS_UNIT_W;
+	r[3] = close[3];
+}
+
+static void worldGpsUnitToggle(void) {
+	g_gpsUnits = worldGpsMetric() ? 0 : 1;
+	dlog(g_gpsUnits ? "minimap: GPS distance in kilometres" : "minimap: GPS distance in miles");
+}
+
+static void drawWorldGpsBar(C2D_TextBuf buf, const Config* cfg, int markerIdx,
+		float mapX, float mapY, float mapW, float mapH) {
+	float bar[4], close[4], unit[4];
+	worldGpsRects(mapX, mapY, mapW, mapH, bar, close);
+	worldGpsUnitRect(close, unit);
+	const u32 rgb = options_gps_colour_rgb(gProfile.options.gameplay.gpsColour);
+	const u32 accent = C2D_Color32((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, 255);
+	const float x = bar[0], y = bar[1], w = bar[2], h = bar[3];
+	const float midY = y + h * 0.5f;
+	drawWorldPlate(x, y, w, h, 0.7f, accent);
+
+	// The distance, straight, from the car to the marker.
+	const MinimapMarker* mk = &g_markers[markerIdx];
+	const float dx = mk->worldX - g_worldPos[0], dy = mk->worldY - g_worldPos[1];
+	const float metres = sqrtf(dx * dx + dy * dy);
+	char dist[32];
+	if (worldGpsMetric()) {
+		if (metres < 1000.0f)
+			snprintf(dist, sizeof(dist), "%d m", (int)(metres + 0.5f));
+		else
+			snprintf(dist, sizeof(dist), "%.1f km", metres / 1000.0f);
+	} else {
+		const float miles = metres / 1609.344f;
+		if (miles < 0.2f)
+			snprintf(dist, sizeof(dist), "%d ft", (int)(metres * 3.28084f + 0.5f));
+		else
+			snprintf(dist, sizeof(dist), "%.1f mi", miles);
+	}
+
+	// The x.
+	drawWorldPlate(close[0], close[1], close[2], close[3], 0.72f, 0);
+	{
+		const float cx = close[0] + close[2] * 0.5f, cy = close[1] + close[3] * 0.5f;
+		const float a = close[2] * 0.22f;
+		C2D_DrawLine(cx - a, cy - a, WBOT_INK, cx + a, cy + a, WBOT_INK, 2.0f, 0.74f);
+		C2D_DrawLine(cx - a, cy + a, WBOT_INK, cx + a, cy - a, WBOT_INK, 2.0f, 0.74f);
+	}
+
+	// The chip: the arrow, then the distance right-aligned in what is left.
+	drawWorldPlate(unit[0], unit[1], unit[2], unit[3], 0.72f, 0);
+	// Which way it lies from where the car points: up is ahead. The world's
+	// yaw turns counter-clockwise and the screen's y runs down, so the
+	// screen turn is the relative angle negated.
+	const float rel = atan2f(dy, dx) - g_worldYaw;
+	const float ca = cosf(-rel), sa = sinf(-rel);
+	const float ax = unit[0] + 11.0f, ay = midY;
+	const float pts[3][2] = { { 0.0f, -6.5f }, { -5.0f, 5.0f }, { 5.0f, 5.0f } };
+	float q[3][2];
+	for (int k = 0; k < 3; k++) {
+		q[k][0] = ax + pts[k][0] * ca - pts[k][1] * sa;
+		q[k][1] = ay + pts[k][0] * sa + pts[k][1] * ca;
+	}
+	C2D_DrawTriangle(q[0][0], q[0][1], accent, q[1][0], q[1][1], accent, q[2][0], q[2][1],
+		accent, 0.74f);
+	const float distScale = 13.0f / g_fontUnitPx;
+	C2D_Text dt;
+	C2D_TextFontParse(&dt, g_uiFont, buf, dist);
+	C2D_TextOptimize(&dt);
+	float dw = 0.0f, dh = 0.0f;
+	textDims(&dt, distScale, distScale, &dw, &dh);
+	const float distRoom = unit[0] + unit[2] - 6.0f - (ax + 9.0f);
+	const float dsx = (dw > distRoom && dw > 0.0f) ? distScale * distRoom / dw : distScale;
+	const float dwFit = dw > distRoom ? distRoom : dw;
+	C2D_DrawText(&dt, C2D_WithColor, unit[0] + unit[2] - 6.0f - dwFit, midY - dh * 0.5f, 0.74f,
+		dsx, distScale, WBOT_INK);
+
+	// GPS, then the activity's name beside it on the same line, narrowed to
+	// the room before the chip.
+	const float labelScale = 12.0f / g_fontUnitPx;
+	const float nameScale = 14.0f / g_fontUnitPx;
+	C2D_Text lt, nt;
+	C2D_TextFontParse(&lt, g_uiFont, buf, "GPS");
+	C2D_TextOptimize(&lt);
+	C2D_TextFontParse(&nt, g_uiFont, buf, worldGpsName(cfg, mk->element));
+	C2D_TextOptimize(&nt);
+	float lw = 0.0f, lh = 0.0f, nw = 0.0f, nh = 0.0f;
+	textDims(&lt, labelScale, labelScale, &lw, &lh);
+	textDims(&nt, nameScale, nameScale, &nw, &nh);
+	const float lx = x + 10.0f;
+	const float nx = lx + lw + 8.0f;
+	const float room = unit[0] - 8.0f - nx;
+	const float nsx = (nw > room && nw > 0.0f && room > 8.0f) ? nameScale * room / nw : nameScale;
+	C2D_DrawText(&lt, C2D_WithColor, lx, midY - lh * 0.5f, 0.74f, labelScale, labelScale, accent);
+	// A hairline between the two.
+	C2D_DrawRectSolid(nx - 4.5f, y + 7.0f, 0.74f, 1.0f, h - 14.0f, WBOT_PLATE_LINE);
+	C2D_DrawText(&nt, C2D_WithColor, nx, midY - nh * 0.5f, 0.74f, nsx, nameScale, WBOT_INK);
 }
 
 // A race's bottom screen (CONTINUE.MD 1a #17, TASKS.md #268 D): no bank row,
@@ -56162,18 +57258,17 @@ static void drawWorldBottom(C2D_TextBuf buf, const Config* cfg) {
 	const bool stage0 = stage0HasControl();
 	const bool showMap = !stage0 || stage0ShowMinimap();
 
-	// ---- the bank readout, or a world challenge's clock in its place ----
-	if (!g_raceRun.on && !stage0) {
-		if (g_wc.active && g_wc.state == WC_STATE_COUNTING)
-			drawWorldCountdown(buf);
-		else
-			drawWorldBank(buf);
-	}
-
 	// ---- the minimap ----
-	const float mapY = g_raceRun.on ? 0.0f : WBOT_BANK_H;
-	const float mapW = g_raceRun.on ? WBOT_RACE_MAP_W : BOTTOM_W;
+	// PORT (the user, 2026-11-14): the map fills the whole bottom screen
+	// (minimap_set_full_panel()); in free roam the bank is a plate over its
+	// corner (drawn after it, below), in a race the stats column sits over
+	// its right side.
+	const float mapY = 0.0f;
+	// PORT (the user, 2026-11-14): a race's map fills the screen too, the
+	// stats column drawn over its right side on a plate of its own.
+	const float mapW = BOTTOM_W;
 	const float mapH = BOTTOM_H - mapY;
+	minimap_set_full_panel(true);
 	// In a race the radar carries the field and not the city: retail's
 	// RaceCoordinator puts an AIRACER element (minimap.h element 3, the orange
 	// car icon) on every opponent and leaves the shops and event starts off,
@@ -56272,6 +57367,47 @@ static void drawWorldBottom(C2D_TextBuf buf, const Config* cfg) {
 			0.0f, mapY, mapW, mapH,
 			mapMode <= MINIMAP_MODE_ROTATE ? (MinimapMode)mapMode : MINIMAP_MODE_DEFAULT,
 			marks, markCount, &gps);
+	// The touch screen's map controls (worldMapTouch()): the zoom's + and -
+	// down the right edge, and in free roam the GPS bar along the bottom
+	// while the GPS is on one of the map's activities.
+	if (g_minimap && showMap) {
+		const int gpsMk = (!g_raceRun.on && !stage0) ? worldGpsMarker() : -1;
+		const bool smsBadge = !g_raceRun.on && !stage0;
+		const bool rainBtn = !g_raceRun.on && !stage0;
+		if (!g_tui.loaded)
+			touchUiLoad(cfg);
+		const bool toggleOn = cfg && cfg->touchToggle && !stage0;
+		g_tui.custom = toggleOn;
+		if (!toggleOn || g_raceRun.on)
+			g_tui.edit = false;
+		worldMapTouch(0.0f, mapY, mapW, mapH, gpsMk >= 0, smsBadge, rainBtn, toggleOn);
+		const bool ed = g_tui.edit;
+		const bool btns = ed || !(toggleOn && g_tui.hidden);
+		if (btns && (ed || !toggleOn || g_tui.on[TUI_ZOOM]))
+			drawWorldZoomButtons(0.0f, mapY, mapW, mapH, gpsMk >= 0);
+		if (rainBtn && btns && (ed || !toggleOn || g_tui.on[TUI_RAIN]))
+			drawWorldRainButton(0.0f, mapY, mapH, gpsMk >= 0);
+		if (gpsMk >= 0 && !ed)
+			drawWorldGpsBar(buf, cfg, gpsMk, 0.0f, mapY, mapW, mapH);
+		if (smsBadge && btns && (ed || !toggleOn || g_tui.on[TUI_SMS]))
+			drawWorldSmsBadge(buf, 0.0f, mapY, mapW);
+		if (toggleOn)
+			drawWorldTouchToggle();
+		if (g_tui.dirty) {
+			touchUiSave(cfg);
+			g_tui.dirty = false;
+		}
+	}
+	// ---- the bank readout, or a world challenge's clock in its place, over
+	// the map ----
+	if (!g_raceRun.on && !stage0) {
+		if (g_wc.active && g_wc.state == WC_STATE_COUNTING)
+			drawWorldCountdown(buf);
+		else if (g_tui.edit || !g_tui.custom || (g_tui.on[TUI_BANK] && !g_tui.hidden))
+			drawWorldBankCompact(buf);
+	}
+	if (g_tui.edit)
+		drawWorldTuiEdit(buf, cfg);
 	// GPS_Search_Group: on the top screen since #487 (drawWorldGpsSearch).
 	if (showMap && !minimap_have_map(g_minimap)) {
 		// Name the file instead of leaving the panel empty -- buildSetupMessage()'s
@@ -56325,8 +57461,14 @@ static void drawWorldBottom(C2D_TextBuf buf, const Config* cfg) {
 				st.driftRows = k + 1;
 			}
 		}
-		hud_draw_race_stats(g_hud, &st, g_uiFont, g_fontUnitPx, mapW, 0.0f,
-			BOTTOM_W - mapW);
+		// Over the map now: a plate under the column so it reads. Its depth is
+		// over the map's art and markers (up to 0.4) and under the column's own
+		// widgets and text (0.5), which citro2d's GEQUAL test keeps in front.
+		C2D_DrawRectSolid(WBOT_RACE_MAP_W, 0.0f, 0.45f, BOTTOM_W - WBOT_RACE_MAP_W, BOTTOM_H,
+			C2D_Color32(8, 12, 18, 0xB8));
+		C2D_DrawRectSolid(WBOT_RACE_MAP_W, 0.0f, 0.455f, 1.0f, BOTTOM_H, WBOT_PLATE_LINE);
+		hud_draw_race_stats(g_hud, &st, g_uiFont, g_fontUnitPx, WBOT_RACE_MAP_W, 0.0f,
+			BOTTOM_W - WBOT_RACE_MAP_W);
 	}
 
 	// ---- the bank pickup's indicator, over the map under the row ----
@@ -58764,6 +59906,224 @@ static void lanFeInput(const Config* cfg, MenuState* m, MenuState* dlg, u32* kDo
 	}
 }
 
+// PORT: the boot language picker (the user's request, 2026-11-14). It runs
+// right after the config is read, before any language table is opened, so
+// nothing has to be reloaded and nothing else is in memory yet. Shown at
+// every start: with a Language= line it goes on by itself after 7 s unless a
+// button is pressed; with none yet, with Language=ASK or with SELECT held as
+// the game starts, it waits for a choice. Only the languages whose
+// LANGUAGES/<name>.bin is on the card are listed. The choice is written back
+// to nfsu2_config.txt as Language=<code> (not with ASK, which asks again).
+typedef struct { const char* code; const char* file; const char* name; } BootLang;
+static const BootLang kBootLangs[] = {
+	{ "EN", "English", "English" },
+	{ "FR", "French",  "Fran\xC3\xA7" "ais" },
+	{ "DE", "German",  "Deutsch" },
+	{ "IT", "Italian", "Italiano" },
+	{ "ES", "Spanish", "Espa\xC3\xB1" "ol" },
+	{ "NL", "Dutch",   "Nederlands" },
+	{ "SV", "Swedish", "Svenska" },
+	{ "DA", "Danish",  "Dansk" },
+};
+#define BOOT_LANG_COUNT ((int)(sizeof(kBootLangs) / sizeof(kBootLangs[0])))
+
+static bool bootLangOnCard(const Config* cfg, const char* file) {
+	char p[600];
+	struct stat st;
+	size_t len = strlen(cfg->gameDir);
+	snprintf(p, sizeof(p), "sdmc:%s%sLANGUAGES/%s.bin", cfg->gameDir,
+		(len > 0 && cfg->gameDir[len - 1] != '/') ? "/" : "", file);
+	return stat(p, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+// Rewrites the config with every active Language= line dropped (commented
+// ones stay) and Language=<code> at the end.
+static void bootLangSave(const Config* cfg, const char* code) {
+	char* buf = NULL;
+	size_t used = 0, cap = 0;
+	FILE* f = fopen(cfg->path, "r");
+	if (f) {
+		char line[512];
+		while (fgets(line, sizeof(line), f)) {
+			const char* k = line;
+			if ((u8)k[0] == 0xEF && (u8)k[1] == 0xBB && (u8)k[2] == 0xBF)
+				k += 3;
+			while (*k == ' ' || *k == '\t')
+				k++;
+			if (strncasecmp(k, "Language", 8) == 0) {
+				const char* e = k + 8;
+				while (*e == ' ' || *e == '\t')
+					e++;
+				if (*e == '=')
+					continue;
+			}
+			size_t n = strlen(line);
+			if (used + n + 1 > cap) {
+				size_t ncap = (used + n + 1) * 2 + 256;
+				char* nb = (char*)realloc(buf, ncap);
+				if (!nb) {
+					free(buf);
+					fclose(f);
+					dlog("language picker: out of memory, config left as it was");
+					return;
+				}
+				buf = nb;
+				cap = ncap;
+			}
+			memcpy(buf + used, line, n);
+			used += n;
+		}
+		fclose(f);
+	}
+	f = fopen(cfg->path, "w");
+	if (!f) {
+		free(buf);
+		dlog("language picker: could not write the config");
+		return;
+	}
+	if (used) {
+		fwrite(buf, 1, used, f);
+		if (buf[used - 1] != '\n')
+			fputs("\n", f);
+	}
+	fprintf(f, "Language=%s\n", code);
+	fclose(f);
+	free(buf);
+}
+
+// countdown: the menu goes on by itself after BOOT_LANG_WAIT_FRAMES with the
+// language unchanged, unless a button is pressed first.
+#define BOOT_LANG_WAIT_FRAMES 420   // 7 s at the panel's 60 Hz
+// The picker's look: a dark backdrop, the game's UI font (g_uiFont, the
+// frontend's Helvetica oblique) and the port's own mint accent (the colour
+// drawHudPicker() titles in). Change them here.
+#define BOOT_LANG_BG_TOP     C2D_Color32(16, 26, 46, 255)
+#define BOOT_LANG_BG_BOTTOM  C2D_Color32(2, 4, 10, 255)
+#define BOOT_LANG_ACCENT     C2D_Color32(138, 244, 202, 255)
+#define BOOT_LANG_ACCENT_DIM C2D_Color32(138, 244, 202, 80)
+#define BOOT_LANG_TEXT       C2D_Color32(235, 240, 245, 255)
+#define BOOT_LANG_TEXT_DIM   C2D_Color32(125, 140, 158, 255)
+#define BOOT_LANG_SEL_TEXT   C2D_Color32(8, 16, 24, 255)
+
+static void bootLangText(C2D_TextBuf buf, const char* s, float x, float y, float scale, u32 color) {
+	C2D_Text t;
+	if (!C2D_TextFontParse(&t, g_uiFont, buf, s))
+		return;
+	C2D_TextOptimize(&t);
+	C2D_DrawText(&t, C2D_WithColor | C2D_AlignCenter, x, y, 0.6f, scale, scale, color);
+}
+
+// A bar leaning right like the frontend's oblique type: a parallelogram whose
+// top edge is `lean` px to the right of its bottom edge.
+static void bootLangBar(float x, float y, float w, float h, float lean, float z, u32 c) {
+	C2D_DrawTriangle(x + lean, y, c, x + w + lean, y, c, x, y + h, c, z);
+	C2D_DrawTriangle(x + w + lean, y, c, x + w, y + h, c, x, y + h, c, z);
+}
+
+// Drawn on the game's own render targets, after C2D_Init and the UI font,
+// before the retail fonts and the first language table are loaded.
+static void bootLanguagePicker(Config* cfg, bool countdown,
+		C3D_RenderTarget* top, C3D_RenderTarget* bottom) {
+	if (!top || !bottom)
+		return;
+	int avail[BOOT_LANG_COUNT];
+	int n = 0, sel = 0;
+	const char* cur = cfg->language[0] ? cfg->language : "English";
+	for (int i = 0; i < BOOT_LANG_COUNT; i++) {
+		if (!bootLangOnCard(cfg, kBootLangs[i].file))
+			continue;
+		if (strcmp(kBootLangs[i].file, cur) == 0)
+			sel = n;
+		avail[n++] = i;
+	}
+	if (n < 2) {
+		dlog("language picker: fewer than two language files on the card, skipped");
+		return;
+	}
+	C2D_TextBuf buf = C2D_TextBufNew(1024);
+	if (!buf) {
+		dlog("language picker: no text buffer, skipped");
+		return;
+	}
+	const int startSel = sel;
+	bool save = false;
+	int left = countdown ? BOOT_LANG_WAIT_FRAMES : -1;
+	// The list sits under the title, centred in what is left of the screen.
+	const float rowH = 20.0f;
+	const float listTop = 48.0f + (168.0f - rowH * (float)n) * 0.5f;
+	float barY = listTop + rowH * (float)sel;
+	while (aptMainLoop()) {
+		hidScanInput();
+		const u32 down = hidKeysDown();
+		if (down)
+			left = -1;   // a button stops the countdown
+		if (left == 0) {
+			sel = startSel;
+			save = !cfg->languageSet;
+			break;
+		}
+		const int secs = left > 0 ? (left + 59) / 60 : -1;
+		if (left > 0)
+			left--;
+		if (down & KEY_UP)
+			sel = (sel + n - 1) % n;
+		if (down & KEY_DOWN)
+			sel = (sel + 1) % n;
+		if (down & KEY_A) {
+			save = true;
+			break;
+		}
+		if (down & KEY_B) {
+			// Keep the language as it is; with no Language= line yet, write
+			// it so the picker does not wait for a choice every start.
+			sel = startSel;
+			save = !cfg->languageSet;
+			break;
+		}
+		// The highlight slides to the row rather than jumping.
+		barY += (listTop + rowH * (float)sel - barY) * 0.3f;
+
+		C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+		C2D_TextBufClear(buf);
+
+		C2D_TargetClear(top, BOOT_LANG_BG_BOTTOM);
+		C2D_SceneBegin(top);
+		C2D_DrawRectangle(0.0f, 0.0f, 0.1f, 400.0f, 240.0f,
+			BOOT_LANG_BG_TOP, BOOT_LANG_BG_TOP, BOOT_LANG_BG_BOTTOM, BOOT_LANG_BG_BOTTOM);
+		bootLangText(buf, "LANGUE  /  LANGUAGE", 200.0f, 12.0f, 0.9f, BOOT_LANG_ACCENT);
+		bootLangBar(60.0f, 38.0f, 280.0f, 2.0f, 0.0f, 0.2f, BOOT_LANG_ACCENT_DIM);
+		bootLangBar(120.0f, barY, 160.0f, rowH - 3.0f, 7.0f, 0.3f, BOOT_LANG_ACCENT);
+		for (int i = 0; i < n; i++)
+			bootLangText(buf, kBootLangs[avail[i]].name, 203.0f, listTop + rowH * (float)i,
+				0.7f, i == sel ? BOOT_LANG_SEL_TEXT : BOOT_LANG_TEXT);
+		if (secs > 0) {
+			char cd[64];
+			snprintf(cd, sizeof(cd), "D\xC3\xA9" "marrage dans %d s", secs);
+			bootLangText(buf, cd, 200.0f, 220.0f, 0.55f, BOOT_LANG_TEXT_DIM);
+		}
+
+		C2D_TargetClear(bottom, BOOT_LANG_BG_BOTTOM);
+		C2D_SceneBegin(bottom);
+		C2D_DrawRectangle(0.0f, 0.0f, 0.1f, 320.0f, 240.0f,
+			BOOT_LANG_BG_TOP, BOOT_LANG_BG_TOP, BOOT_LANG_BG_BOTTOM, BOOT_LANG_BG_BOTTOM);
+		bootLangText(buf, "Haut / Bas : choisir", 160.0f, 82.0f, 0.65f, BOOT_LANG_TEXT);
+		bootLangText(buf, "A : valider      B : annuler", 160.0f, 108.0f, 0.65f, BOOT_LANG_TEXT);
+		bootLangBar(40.0f, 140.0f, 240.0f, 2.0f, 0.0f, 0.2f, BOOT_LANG_ACCENT_DIM);
+		bootLangText(buf, "Need for Speed: Underground 2", 160.0f, 214.0f, 0.5f, BOOT_LANG_TEXT_DIM);
+
+		C3D_FrameEnd(0);
+	}
+	C2D_TextBufDelete(buf);
+	const BootLang* l = &kBootLangs[avail[sel]];
+	snprintf(cfg->language, sizeof(cfg->language), "%s",
+		strcmp(l->code, "EN") == 0 ? "" : l->file);
+	if (save && !cfg->languageAsk)
+		bootLangSave(cfg, l->code);
+	char b[96];
+	snprintf(b, sizeof(b), "language picker: %s%s", l->code, save && !cfg->languageAsk ? " (saved)" : "");
+	dlog(b);
+}
+
 int main(int argc, char* argv[])
 {
 	dbglog_init();
@@ -58807,6 +60167,13 @@ int main(int argc, char* argv[])
 		dbglog_exit();
 		gfxExit();
 		return 0;
+	}
+	// SELECT held as the game starts: the language picker waits for a choice
+	// (bootLanguagePicker(), run once the render targets exist below).
+	bool langSelectHeld = false;
+	if (haveConfig) {
+		hidScanInput();
+		langSelectHeld = (hidKeysHeld() & KEY_SELECT) != 0;
 	}
 	// The data mods (#320): indexed once, before the first asset is read.
 	if (haveConfig)
@@ -59145,7 +60512,6 @@ int main(int argc, char* argv[])
 			g_fontUnitPx, measured);
 		dlog(b);
 	}
-	loadRetailFonts(haveConfig ? &cfg : NULL);
 
 	// Both targets are built by hand rather than with C2D_CreateScreenTarget(),
 	// because that helper asks for no depth buffer and both screens now carry
@@ -59162,6 +60528,30 @@ int main(int argc, char* argv[])
 		C3D_RenderTargetCreate(240, 320, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
 	if (targetBottom)
 		C3D_RenderTargetSetOutput(targetBottom, GFX_BOTTOM, GFX_LEFT, DISPLAY_TRANSFER_FLAGS);
+	// The boot language picker, on these targets with the UI font: every start.
+	// With a language already chosen it waits 7 s and goes on by itself; the
+	// first time, with Language=ASK or with SELECT held, it waits for a choice.
+	// It runs before the retail fonts (loadRetailFonts() reads the language
+	// file) and before any screen's text; the one string read earlier, the
+	// unnamed profile's name, is read again when the language changed.
+	if (haveConfig) {
+		char langBefore[sizeof(cfg.language)];
+		snprintf(langBefore, sizeof(langBefore), "%s", cfg.language);
+		bootLanguagePicker(&cfg, cfg.languageSet && !cfg.languageAsk && !langSelectHeld,
+			targetTop, targetBottom);
+		if (strcmp(langBefore, cfg.language) != 0) {
+			char langPath[600];
+			LangTable lang;
+			if (buildGamePath(&cfg, "LANGUAGES/English.bin", langPath, sizeof(langPath)) &&
+					langbin_load(langPath, &lang)) {
+				const char* s = langbin_lookup(&lang, PROFILE_UNNAMED_STRING);
+				if (s)
+					langTextToUtf8(s, gProfile.name, sizeof(gProfile.name));
+				langbin_free(&lang);
+			}
+		}
+	}
+	loadRetailFonts(haveConfig ? &cfg : NULL);
 	// The world's right eye and its 2D's overlay (#326), before fe_post.c's and
 	// fe_cache.c's targets take the rest of the VRAM.
 	stereo_init(dlog, targetTop, DISPLAY_TRANSFER_FLAGS);
@@ -62443,6 +63833,13 @@ int main(int argc, char* argv[])
 				smsQueueTick(frameDt);
 				if (!simHold && want == WORLD_UI_NONE && smsAutopopup())
 					want = WORLD_UI_SMS;
+				// The touch screen's messages badge (drawWorldSmsBadge()), as
+				// Display SMS pressed. A tap under another overlay is dropped.
+				if (g_smsBadgeTap) {
+					g_smsBadgeTap = false;
+					if (!simHold && want == WORLD_UI_NONE)
+						want = WORLD_UI_SMS;
+				}
 				// The tuning race (#417): RCStateRaceInProgress's
 				// FEngStartInteraction while NeedsFEngScreenForDyno -- the
 				// setting screen until one is picked, then the hub -- and the

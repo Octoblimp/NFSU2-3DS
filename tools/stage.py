@@ -333,6 +333,10 @@ def build_plan(pc, gd, tracks=ALL_TRACKS):
          [py("hull_pack.py", cars, J(gout, "CARHULLS.nfsg"))], reads=["CARS/*/GEOMETRY.BIN"])
 
     copy("text", pcp(pc, "LANGUAGES", "English.bin"), J(gd, "LANGUAGES", "English.bin"))
+    # The other Latin-script tables, for nfsu2_config.txt's Language= key.
+    for lang in ("French", "German", "Italian", "Spanish", "Dutch", "Swedish", "Danish"):
+        if os.path.isfile(pcp(pc, "LANGUAGES", lang + ".bin")):
+            copy("text", pcp(pc, "LANGUAGES", lang + ".bin"), J(gd, "LANGUAGES", lang + ".bin"))
     copy("text", pcp(pc, "CREDITS", "NA_ENGLISH.TXT"), J(gd, "CREDITS", "NA_ENGLISH.TXT"))
     copy("text", pcp(pc, "CREDITS", "UK_ENGLISH.TXT"), J(gd, "CREDITS", "UK_ENGLISH.TXT"))
 

@@ -39,6 +39,13 @@
 
 #include "options.h"
 
+// libctru's frd.h (reached through <3ds.h>) has its own typedef named
+// Profile in some versions. <3ds.h> is pulled in here first so its typedef
+// keeps its name, then the port's save profile is spelled NfsuProfile under
+// the old name for every file that includes this header.
+#include <3ds.h>
+#define Profile NfsuProfile
+
 // ---- container (docs/formats/savefile.md Part 2, "Container: MC02") -------
 #define PROFILE_MC02_MAGIC     0x4D433032u // 'MC02'
 #define PROFILE_MC02_HDR_SIZE  0x1C

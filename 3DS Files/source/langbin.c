@@ -33,6 +33,13 @@ typedef struct {
 // '?' that a dropped character would fall back to anyway.
 #define LANGBIN_WCHAR_COUNT 256
 
+// PORT (the user, 2026-11-14): French.bin puts a no-break space (U+00A0)
+// before every colon -- "De : %s", 643 of them -- and the UI font has no glyph
+// for it, so it drew as '?'. A plain space looks the same on screen.
+static u32 langbin_fold(u32 cp) {
+	return cp == 0xA0 ? 0x20 : cp;
+}
+
 static u32 langbin_utf8_len(u32 cp) {
 	if (cp < 0x80) return 1;
 	if (cp < 0x800) return 2;
@@ -74,7 +81,7 @@ static bool langbin_to_utf8(LangTable* t, const u16* remap) {
 			} else {
 				anyHigh = true;
 				const u16 m = remap[*s];
-				need += langbin_utf8_len(m ? m : *s);
+				need += langbin_utf8_len(langbin_fold(m ? m : *s));
 			}
 		}
 		need++; // NUL
@@ -92,7 +99,7 @@ static bool langbin_to_utf8(LangTable* t, const u16* remap) {
 		entries[i].stringOffset = (s32)(w - out);
 		for (; *s; s++) {
 			const u16 m = *s < 0x80 ? 0 : remap[*s];
-			w = langbin_utf8_put(w, m ? m : *s);
+			w = langbin_utf8_put(w, langbin_fold(m ? m : *s));
 		}
 		*w++ = '\0';
 	}
