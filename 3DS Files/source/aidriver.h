@@ -121,6 +121,7 @@ typedef struct {
 
 	float steerTo[2];   // +0x204, the world XY point being steered at
 	float lateral_m;    // DriveTarget::GetLateralOffset, metres right of line
+	bool retailTarget;  // PORT (#549): the target is retail's FuturePoints
 	float desired;      // +0x210, the speed the goal wants, m/s; < 0 backs up
 	float desiredPrev;  // +0x244
 

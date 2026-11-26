@@ -3496,6 +3496,7 @@ static const bool kFpTrust = true;    // only where its line is on the port's ro
 #define FP_TRUST_AHEAD 80.0f
 #define FP_TRUST_STEP  8.0f
 #define FP_TRUST_M     0.5f
+#define FP_TRUST_PATH_M 1.0f   // 2: 60% of a race on FP, twice the unsticks
 #define FP_TRUST_SEC   3.0f
 #define FP_TRUST_IN_M  0.5f
 #define FP_BEND_SPAN  15.0f
@@ -3675,8 +3676,9 @@ static void fpStep(OpponentField* f, int i, Opponent* o) {
 			if (!fp_point_ahead(o->fp, pos, s, 0.0f, a)) break;
 			d = ailine_track(f->line, d, 10.0f, 60.0f, a, &lat, NULL);
 			if (!ownRoadSpan(f, o, d, &lo, &hi)) continue;
-			// Back on only with that much room inside them.
-			const float tol = o->fpOn ? FP_TRUST_M : -FP_TRUST_IN_M;
+			// Its line may run FP_TRUST_PATH_M past them (the drive target
+			// is kept inside, kFpEdges); back on only once it is within.
+			const float tol = o->fpOn ? FP_TRUST_PATH_M : 0.0f;
 			if (lat < lo - tol || lat > hi + tol) {
 				fpLost(f, o, c, "off the road");
 				c->retryAt = f->raceSec + FP_TRUST_SEC;
@@ -4036,6 +4038,7 @@ void opponent_update(OpponentField* f, const RaceRoute* route,
 		// DriveTarget::GetLateralOffset: how far off its own line the car is,
 		// positive to the right of travel.
 		o->drv.lateral_m = fpAimed ? fpLat : lineLat - planLat;
+		o->drv.retailTarget = fpAimed;
 
 		// SetDesiredSpeedAsRacer (0x8000B7D0): every switch interval the
 		// driver re-rolls where up the road it reads its speed limit from,

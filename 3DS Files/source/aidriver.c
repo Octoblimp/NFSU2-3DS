@@ -432,6 +432,9 @@ static void recordWheelSlip(AiDriver* d, const CarSim* s, float dt, float vfwd) 
 // whole field across every track ran 3,241 s off the line and needed 87
 // unsticks; on the fixed weights, 121 s and 13. So every racer takes the
 // fixed-weight branch that retail keeps for the drift and drag styles.
+// #549: with FuturePoints ported it runs only on a retail target
+// (d->retailTarget), and there too the full field needed 50 unsticks to 32
+// and 172 s on the walls to 76 (solo no different). Still off.
 static const bool kSteerAdaptive = false;
 
 static float steerAdaptive(AiDriver* d, const CarSim* s, float speed, float vfwd,
@@ -498,6 +501,8 @@ static float steerAirborne(AiDriver* d, const CarSim* s, float curDeg, float vfw
 // profiles, it raced 1.2% slower and touched 3,719 times to 2,554 (485 s of
 // contact to 337), ran 65 s off the road to 44, and four racers left it on
 // 4101F and 4107B who otherwise did not.
+// #549: on FuturePoints alone (d->retailTarget) it was 0.5% slower with 45
+// unsticks to 32 across the full field. Still off.
 static const bool kThrottleAdaptive = false;
 #define AI_THR_ADAPTIVE_SPEED 30.0f   // 0x8031768C
 static float throttleAdaptive(AiDriver* d, float speed, float want, float dt) {
@@ -547,7 +552,7 @@ static void calcThrottleAndBrake(AiDriver* d, const CarSim* s, float dt,
 	}
 
 	float out, lo, hi;
-	if (kThrottleAdaptive && want > AI_THR_ADAPTIVE_SPEED) {
+	if (kThrottleAdaptive && d->retailTarget && want > AI_THR_ADAPTIVE_SPEED) {
 		out = throttleAdaptive(d, speed, want, dt);
 		lo = -1.0f;
 		hi = 1.0f;
@@ -684,7 +689,7 @@ void aidriver_drive(AiDriver* d, const CarSim* s, float dt, CarSimInput* out) {
 		float I = clampf(wH * pidIntegral(&d->heading) + wB * pidIntegral(&d->blended),
 			-AI_STEER_INTEGRAL_CLAMP, AI_STEER_INTEGRAL_CLAMP);
 
-		if (kSteerAdaptive && !drifting)
+		if (kSteerAdaptive && d->retailTarget && !drifting)
 			cmd = steerAdaptive(d, s, speed, vfwd, P, I, D, dt);
 		else
 			cmd = -P * kSteerP[mi] - D * kSteerD[mi] - I * kSteerI[mi];

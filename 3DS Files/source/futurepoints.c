@@ -19,7 +19,7 @@
 // PORT: across one of the race's hops (fp_set_race) the line carries on from
 // where it was and eases onto the new route's at this rate, as the AiLine's
 // own ramps do, instead of jumping sideways onto the new route's line.
-#define FP_HOP_RATE  0.4f
+#define FP_HOP_RATE  0.15f  // 0.4 jinked the line 22 degrees at each hop (4045B 1,260 m)
 #define FP_SIGN_SKIP 3.0f   // 0x80318530
 #define FP_FAR_ENOUGH 5.0f  // 0x80318558 (10 in drag: PORT, racers only)
 #define FP_INTERP    8.0f   // 0x80318564, 1 / 0.125
