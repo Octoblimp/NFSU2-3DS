@@ -53,5 +53,6 @@ void trails_release(void);
 
 // The left eye's buffer (colour and its own depth, both VRAM) made at the
 // world's opening, ahead of the bank's textures, when Light Trails will run:
-// `width` the eye target's (240).
-void trails_world_buffer(bool want, u16 width, GPU_DEPTHBUF depthFmt);
+// `width` the eye target's (240), `rows` its tallest: 800 with Resolution
+// Auto (stereo.h), else 400; should 800 not fit, 400.
+void trails_world_buffer(bool want, u16 width, u16 rows, GPU_DEPTHBUF depthFmt);

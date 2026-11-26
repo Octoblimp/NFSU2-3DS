@@ -775,6 +775,11 @@ static void loadTimeEnd(const char* step) {
 //   DbgStereoSwap  1: the left screen shows the right eye and the right the
 //                    left, so a screenshot of Azahar's flat view shows the
 //                    right eye. Not a game feature; 0 (default) is off.
+//   DbgWideShot    seconds: while the top screen is 800x240 (Display >
+//                    Resolution > Auto), its whole framebuffer saved every
+//                    so often as SHOT_DIR/wide_NN.bmp, up to 20 -- Azahar
+//                    shows only the first 400 columns of the mode. Not a
+//                    game feature; 0 (default) is off.
 //   DbgDisplayLevel 0..5: the display settings at that Level of Detail's
 //                    preset (#326) over the profile's, in memory only: the
 //                    Display page's back does not save them. Not a game
@@ -782,7 +787,9 @@ static void loadTimeEnd(const char* step) {
 //   DbgDisplaySet  name:value,... (display_describe's names, "envUpd:0"):
 //                    single display values over the profile's or the
 //                    DbgDisplayLevel preset, each to its cap, in memory only.
-//                    Not a game feature; empty (default) is off.
+//                    Also "stereoStyle", "stereo" (the 3-D 0/1) and "res"
+//                    (Resolution: 0 400x240, 1 Auto). Not a game feature;
+//                    empty (default) is off.
 // Keys and values are trimmed of spaces/tabs, and a UTF-8 byte-order mark
 // (Windows Notepad can write one) is skipped, so neither hides GameDir.
 
@@ -916,6 +923,7 @@ typedef struct {
 	float dbgAfxCap;         // #521: marker particles' screen cap (240-line px), < 0 = the shipped one
 	float dbgStereo;         // the 3D slider's place for the stereo, 0 = the hardware's (#326)
 	bool  dbgStereoSwap;     // the eyes swapped between the panel's sides (#326)
+	float dbgWideShot;       // seconds between 800x240 top-screen BMPs, 0 = none
 	int   dbgDisplayLevel;   // the display's preset level, < 0 = the profile's (#326)
 	char  dbgDisplaySet[96]; // name:value,... over the display settings (#326)
 	bool  dbgFirstRunConfig; // write both builds' first-run configs to test files (#449)
@@ -1080,6 +1088,7 @@ static bool loadConfig(int argc, char** argv, Config* out) {
 	out->dbgAfxCap = -1.0f;
 	out->dbgStereo = 0.0f;
 	out->dbgStereoSwap = false;
+	out->dbgWideShot = 0.0f;
 	out->dbgDisplayLevel = -1;
 	out->dbgDisplaySet[0] = '\0';
 	out->dbgFirstRunConfig = false;
@@ -1509,6 +1518,8 @@ static bool loadConfig(int argc, char** argv, Config* out) {
 			out->dbgStereo = strtof(val, NULL);
 		} else if (strcmp(key, "DbgStereoSwap") == 0) {
 			out->dbgStereoSwap = atoi(val) != 0;
+		} else if (strcmp(key, "DbgWideShot") == 0) {
+			out->dbgWideShot = strtof(val, NULL);
 		} else if (strcmp(key, "DbgDisplayLevel") == 0) {
 			out->dbgDisplayLevel = atoi(val);
 		} else if (strcmp(key, "DbgDisplaySet") == 0) {
@@ -6110,6 +6121,16 @@ static void dbgDisplayOverride(void) {
 		// The 3-D Style (#365) is not in the PC block: its own name here.
 		if (colon && strcmp(tok, "stereoStyle") == 0) {
 			g_display.stereoStyle = (u32)atoi(colon + 1);
+			continue;
+		}
+		// Nor are the Resolution row's mode (display.h's DISPLAY_RES_*) and
+		// the 3-D's on/off, which are outside the capped values.
+		if (colon && strcmp(tok, "res") == 0) {
+			g_display.b.racingRes = (u32)atoi(colon + 1);
+			continue;
+		}
+		if (colon && strcmp(tok, "stereo") == 0) {
+			g_display.stereo = (u32)atoi(colon + 1);
 			continue;
 		}
 		const int idx = colon ? display_index_named(tok) : -1;
@@ -27501,10 +27522,13 @@ static void scissorLogical(float screenW, float screenH,
 		x1 = x0 + 1.0f;
 		y1 = y0 + 1.0f;
 	}
+	// The top screen at 800x240 (stereo_wide()): two of the buffer's rows a
+	// logical pixel across.
+	const float k = (screenW == SCREEN_TOP_W && stereo_wide()) ? 2.0f : 1.0f;
 	C2D_Flush();
 	C3D_SetScissor(GPU_SCISSOR_NORMAL,
-		(u32)(screenH - y1), (u32)(screenW - x1),
-		(u32)(screenH - y0), (u32)(screenW - x0));
+		(u32)(screenH - y1), (u32)((screenW - x1) * k),
+		(u32)(screenH - y0), (u32)((screenW - x0) * k));
 }
 
 static void scissorReset(void) {
@@ -39700,8 +39724,9 @@ static bool worldEnter(const Config* cfg, void (*tick)(void*), void* tickUd) {
 	// Light Trails' buffer (trails.h). (FSAA, which took 1.5 MB here, is cut:
 	// the user, 2026-11-09, "Cut FSAA, leave light trails.")
 	smear_world_buffer(true);
+	// Resolution Auto: 800 rows, the wide top screen's, which serve 400 too.
 	trails_world_buffer(g_display.b.lightStreaks && g_display.b.lightGlow, 240,
-		GPU_RB_DEPTH24_STENCIL8);
+		g_display.b.racingRes == DISPLAY_RES_AUTO ? 800 : 400, GPU_RB_DEPTH24_STENCIL8);
 	world_set_vram_tex(g_vramTexCfg);
 	worldPickRegion(cfg);
 	char dir[560];
@@ -55055,7 +55080,8 @@ static const SweepStep* sweepSteps(int* n) {
 // (stereo.c's lumaAt()), so a bottom-up BMP row is one pixel from each column.
 // Read as stereo.c's check() reads it: after FrameEnd, double-buffered, so the
 // frame two back -- the same step's when the window is longer than two frames.
-static bool topShotSave(const u8* fb, const char* path);
+static bool topShotSaveCols(const u8* fb, int cols, const char* path);
+#define topShotSave(fb, path) topShotSaveCols((fb), 400, (path))
 static void sweepShot(int step, const char* name) {
 	u16 w, h;
 	const u8* fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &w, &h);
@@ -55072,29 +55098,70 @@ static void sweepShot(int step, const char* name) {
 	dlog(b);
 }
 
-// A top-screen framebuffer (240x400 BGR, a column a screen x) to `path` as a
-// 400x240 24-bit BMP.
-static bool topShotSave(const u8* fb, const char* path) {
-	GSPGPU_InvalidateDataCache((void*)fb, 240 * 400 * 3);
+// A top-screen framebuffer (240 x `cols` BGR, a column a screen x: 400, or
+// 800 in the wide mode) to `path` as a cols x 240 24-bit BMP.
+static void put32(u8* p, u32 v) {
+	p[0] = (u8)v; p[1] = (u8)(v >> 8); p[2] = (u8)(v >> 16); p[3] = (u8)(v >> 24);
+}
+static bool topShotSaveCols(const u8* fb, int cols, const char* path) {
+	GSPGPU_InvalidateDataCache((void*)fb, 240 * cols * 3);
 	mkdir(SHOT_DIR, 0777);
 	FILE* f = fopen(path, "wb");
 	if (!f)
 		return false;
-	static const u8 head[54] = {
-		'B', 'M', 0x36, 0x65, 0x04, 0, 0, 0, 0, 0, 54, 0, 0, 0,   // 54 + 288000 bytes
-		40, 0, 0, 0, 0x90, 0x01, 0, 0, 0xF0, 0, 0, 0,             // 400 x 240, bottom up
-		1, 0, 24, 0, 0, 0, 0, 0, 0x00, 0x65, 0x04, 0,             // 24-bit, 288000 bytes
-		0x13, 0x0B, 0, 0, 0x13, 0x0B, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	};
-	static u8 row[400 * 3];
+	const u32 bytes = (u32)cols * 240 * 3;
+	u8 head[54];
+	memset(head, 0, sizeof(head));
+	head[0] = 'B';
+	head[1] = 'M';
+	put32(head + 2, 54 + bytes);
+	head[10] = 54;
+	head[14] = 40;
+	put32(head + 18, (u32)cols);
+	put32(head + 22, 240);           // bottom up
+	head[26] = 1;
+	head[28] = 24;
+	put32(head + 34, bytes);
+	put32(head + 38, 0x0B13);
+	put32(head + 42, 0x0B13);
+	static u8 row[800 * 3];
 	bool ok = fwrite(head, 1, sizeof(head), f) == sizeof(head);
 	for (int r = 0; r < 240 && ok; r++) {
-		for (int x = 0; x < 400; x++)
+		for (int x = 0; x < cols; x++)
 			memcpy(row + x * 3, fb + (x * 240 + r) * 3, 3);
-		ok = fwrite(row, 1, sizeof(row), f) == sizeof(row);
+		ok = fwrite(row, 1, (size_t)cols * 3, f) == (size_t)cols * 3;
 	}
 	fclose(f);
 	return ok;
+}
+
+// DbgWideShot: the 800x240 top screen's whole back buffer (Azahar shows only
+// its first 400 columns), every `every` seconds while it is wide, 20 at most.
+// Read after FrameEnd as the look sweep reads it: the frame two back.
+static void wideShotTick(float every, float dt) {
+	static float since;
+	static int n;
+	if (!stereo_wide() || n >= 20) {
+		since = 0.0f;
+		return;
+	}
+	since += dt;
+	if (since < every)
+		return;
+	since = 0.0f;
+	u16 w, h;
+	const u8* fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &w, &h);
+	char path[96], b[160];
+	if (!fb || w != 240 || h != 800) {
+		snprintf(b, sizeof(b), "wide shot: framebuffer %ux%u, not 240x800", w, h);
+		dlog(b);
+		n++;
+		return;
+	}
+	snprintf(path, sizeof(path), SHOT_DIR "/wide_%02d.bmp", ++n);
+	snprintf(b, sizeof(b), "wide shot: %s %s", topShotSaveCols(fb, 800, path) ? "saved"
+		: "could not write", path);
+	dlog(b);
 }
 
 // #328: the top screen as the display controller shows it -- a "present
@@ -59601,10 +59668,9 @@ int main(int argc, char* argv[])
 	// otherwise, so citro2d treats them identically.
 	// The frontend's car frames draw their room and car into fe_post.c's
 	// supersampled target first, which then boxes down into this one (#312).
-	C3D_RenderTarget* targetTop =
-		C3D_RenderTargetCreate(240, 400, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
-	if (targetTop)
-		C3D_RenderTargetSetOutput(targetTop, GFX_TOP, GFX_LEFT, DISPLAY_TRANSFER_FLAGS);
+	// Its buffers hold the 800-wide mode as well, in the stereo pair's VRAM
+	// (stereo.c's head, Display > Resolution > Auto).
+	C3D_RenderTarget* targetTop = stereo_top_create(DISPLAY_TRANSFER_FLAGS);
 	C3D_RenderTarget* targetBottom =
 		C3D_RenderTargetCreate(240, 320, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
 	if (targetBottom)
@@ -59806,9 +59872,11 @@ int main(int argc, char* argv[])
 			? C2D_Color32((WORLD_FOG_RGB >> 16) & 0xFF, (WORLD_FOG_RGB >> 8) & 0xFF,
 				WORLD_FOG_RGB & 0xFF, 255)
 			: C2D_Color32(0, 0, 0, 255);
+		// First: it may change the top target's size (Resolution Auto), which
+		// the clear's fill takes.
+		stereo_frame_start();
 		C2D_TargetClear(targetTop, clearTop);
 		C2D_TargetClear(targetBottom, C2D_Color32(0, 0, 0, 255));
-		stereo_frame_start();
 
 		// Start New Career: EnterMemcard's MC_Main.fng over MC_Background.fng, in
 		// UI_StartCareer's place until it is done -- DoSaveFlow(1) or (2)'s
@@ -65229,6 +65297,8 @@ int main(int argc, char* argv[])
 			}
 		}
 		profEnd(PROF_PRESENT);
+		if (haveConfig && cfg.dbgWideShot > 0.0f)
+			wideShotTick(cfg.dbgWideShot, frameMs * 0.001f);
 		if (bootState == BOOT_WORLD) {
 			sweepTick(&cfg, g_simReady && fabsf(g_sim.speed) < 0.3f &&
 				worldUi == WORLD_UI_NONE, frameMs, gpuMs,

@@ -40,7 +40,7 @@ SOURCES = ["opponent.c", "aidriver.c", "carsim.c", "race.c", "trackroute.c",
            "trackpath.c", "topology.c", "difficulty.c", "cardb.c", "bunidx.c",
            "trackdb.c", "eventdb.c", "ridephys.c", "perfdb.c", "rideinfo.c",
            "carpartdb.c", "carhull.c", "draglane.c", "custtune.c", "presetcar.c",
-           "lz4dec.c"]
+           "lz4dec.c", "futurepoints.c"]
 
 STUB_3DS_H = """// Host stand-in for libctru's <3ds.h>: the integer types, and the bool and
 // size_t it brings in with them, and the linear heap as the ordinary one.

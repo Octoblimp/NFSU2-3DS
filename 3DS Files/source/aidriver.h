@@ -297,7 +297,12 @@ float aispeed_at(const AiSpeedProfile* p, float dist);
 // profile was planned on, and the braking it was scrubbed with (m/s^2): for a
 // path the profile does not cover, a fork's branch (TASKS.md #409).
 float aispeed_corner(const AiSpeedProfile* p, float curv);
+// Curvature (0x801FA46C) and GetSpeedLimitForCurvature (0x801FA2E4).
+float ai_curvature(const float a[2], const float b[2], const float c[2]);
+float ai_speed_for_curvature(float friction, float curv, float maxSpeed);
 float aispeed_braking(const AiSpeedProfile* p);
+// The friction its corners are planned on (futurepoints.c's FPCar).
+float aispeed_friction(const AiSpeedProfile* p);
 
 // The slowest sample in the profile, for the load log.
 float aispeed_min(const AiSpeedProfile* p);

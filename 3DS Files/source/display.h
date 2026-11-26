@@ -56,7 +56,8 @@ typedef struct {
 	u32 rain;         // +0x60 g_RainEnable
 	u32 u64;          // +0x64 no name, no row: default 1, clamped like the rest
 	u32 texFilter;    // +0x68 g_TextureFiltering 0 point / 1 bilinear / 2 anisotropic
-	u32 racingRes;    // +0x6C g_RacingResolution, the Resolution row's mode index
+	u32 racingRes;    // +0x6C g_RacingResolution, the Resolution row's mode index:
+	                  //       PORT DISPLAY_RES_400 or DISPLAY_RES_AUTO
 	u32 notFirstTime; // +0x70 NotFirstTime: 0 runs the first-run pick
 	u32 vsync;        // +0x74 g_VSyncOn
 } DisplayBlock;
@@ -86,6 +87,13 @@ typedef struct {
 // standing in front of the glass (stereo.c).
 #define DISPLAY_STEREO_INTO 0
 #define DISPLAY_STEREO_POP  1
+
+// The Resolution row's two modes (PORT; the PC's are its card's): the top
+// screen at 400x240 always, or Auto -- 800x240 while the 3-D is not showing
+// (3-D off, or the slider down) and 400x240 stereo while it is, as the
+// hardware has no stereo in its 800-wide mode (stereo.c).
+#define DISPLAY_RES_400  0
+#define DISPLAY_RES_AUTO 1
 
 #define DISPLAY_STEREO_STEPS 10
 #define DISPLAY_LEVEL_MAX 5

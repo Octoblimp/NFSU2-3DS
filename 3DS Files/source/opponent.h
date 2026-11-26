@@ -12,6 +12,7 @@
 #include "rideinfo.h"
 #include "ridephys.h"
 #include "trackroute.h"
+#include "futurepoints.h"
 
 // The AI opponents of a career race (TASKS.md #221, CONTINUE.MD E4/E5).
 //
@@ -327,6 +328,15 @@ typedef struct {
 	int       fork;
 	float     forkLat;
 	u64       forkSeen;
+	// Retail's FuturePoints (TASKS.md #549, futurepoints.c): the racing line
+	// the car steers and plans its speed on, walked over the TrackRoutes
+	// ahead of it. Made on the first racing frame; NULL in a drag (lanes) or
+	// with no Routes file. `fpOn` while it is the car's drive target this
+	// frame; off, the car drives the AiLine as before. `fpCtx` is its fork
+	// callback's (opponent.c FpCtx).
+	FuturePoints* fp;
+	void*     fpCtx;
+	bool      fpOn;
 
 	// Car::Deactivate (Speed.elf): a free-roam racer (encounter.c) the
 	// RandomEncounterManager has taken off the road -- not drawn, not
@@ -408,6 +418,19 @@ typedef struct {
 	// (Player::HandleReset searches the race's TrackRoutes, TASKS.md #279).
 	// Owned by the field and freed with it; NULL when it was not loaded.
 	TrackRouteSet* routes;
+	// The race's TrackRoutePoints' distances along it (+0x08), sorted, one
+	// per place: the drive target's points (opponent.c retailAim, TASKS.md
+	// #549). Built from `routes` on first use; owned by the field.
+	float* dtDist;
+	int dtCount;
+	// The race's way over the routes for the racers' FuturePoints (TASKS.md
+	// #549, fp_set_race): ailine_hops() on `line`, made on first use; owned
+	// by the field.
+	TrackRouteHop* fpHops;
+	int fpNHops;
+	u8* fpOnRace;
+	bool fpRaceTried;
+	bool dtTried;
 
 	// Seconds since GO, for Race::GracePeriodIsActive.
 	float raceSec;

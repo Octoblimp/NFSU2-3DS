@@ -362,9 +362,9 @@ static void buildControls(const OptTarget* t, RowSink* sink) {
 // of Detail slider, then the Customize and Default buttons (AddButton
 // 0x54EE40).
 //
-// PORT: Resolution is built disabled. Its LEFT/RIGHT (0x49B600) steps the
-// card's mode list; the 3DS's top screen has the one mode, which is what the
-// row prints. After the PC's four come the stereoscopic 3D rows, which the
+// PORT: Resolution's LEFT/RIGHT (0x49B600) steps the card's mode list; here
+// the list is the top screen's two, 400x240 and Auto (display.h's
+// DISPLAY_RES_*), which A toggles as well. After the PC's four come the stereoscopic 3D rows, which the
 // PC has no use for: 3-D on or off, then how deep the picture goes at full
 // slider, how far ahead the screen's plane sits, and how far the HUD stands
 // out (display.h).
@@ -480,10 +480,9 @@ int options_build_rows(OptPage page, const OptTarget* t, OptRow* rows, int maxRo
 
 bool options_row_disabled(OptKind kind) {
 	// Feedback's enable is the force-feedback device byte [0x87078C]
-	// (0x5B8240); Rumble Feature, Resolution and Vsync are disabled for the
-	// reasons on their builders. None has hardware behind it here.
-	return kind == OPT_FEEDBACK || kind == OPT_VIBRATION || kind == OPT_RESOLUTION ||
-		kind == OPT_CD_VSYNC;
+	// (0x5B8240); Rumble Feature and Vsync are disabled for the reasons on
+	// their builders. None has hardware behind it here.
+	return kind == OPT_FEEDBACK || kind == OPT_VIBRATION || kind == OPT_CD_VSYNC;
 }
 
 // ---------------------------------------------------------------------------
@@ -685,9 +684,10 @@ void options_row_value(const OptTarget* t, OptKind kind, OptValue* out) {
 		break;
 
 	// 0x49B690 prints a literal per mode of the card ("640x480" for mode 0,
-	// up to "1600x1200"); the 3DS's top screen has the one.
+	// up to "1600x1200"); PORT: the 3DS's top screen's two.
 	case OPT_RESOLUTION:
-		out->text = "400x240";
+		out->text = t->display && t->display->b.racingRes == DISPLAY_RES_AUTO
+			? "Auto (800x240)" : "400x240";
 		break;
 
 	case OPT_LEVEL_OF_DETAIL: // init 0x49B7C0: min 0, max 5.0, step 1.0
@@ -935,6 +935,14 @@ bool options_adjust(const OptTarget* t, OptKind kind, bool right) {
 			t->display->stereo = t->display->stereo ? 0 : 1;
 		break;
 
+	// 0x49B600: the next or last mode, stopping at the list's ends on the PC;
+	// PORT: a list of two, so either way toggles.
+	case OPT_RESOLUTION:
+		if (t->display)
+			t->display->b.racingRes = t->display->b.racingRes == DISPLAY_RES_AUTO
+				? DISPLAY_RES_400 : DISPLAY_RES_AUTO;
+		break;
+
 	case OPT_STEREO_STYLE:
 		if (t->display)
 			t->display->stereoStyle = t->display->stereoStyle == DISPLAY_STEREO_POP
@@ -971,6 +979,7 @@ OptAccept options_accept(const OptTarget* t, OptKind kind) {
 	// PORT: the 3-D row takes the accept as the Customize toggles do.
 	case OPT_STEREO:
 	case OPT_STEREO_STYLE:
+	case OPT_RESOLUTION: // PORT: its two modes
 	case OPT_GPS_COLOUR: // PORT (#471)
 	case OPT_BOTTOM_SCREEN: // PORT (#544)
 		options_adjust(t, kind, true);

@@ -158,6 +158,35 @@ AiLine* ailine_build(const TrackRouteSet* s, const RaceRoute* route, float start
 	const float* gridXY, int nGrid, const AiLineWalls* walls, void (*log)(const char* msg));
 void ailine_free(AiLine* t);
 
+// Where the race goes from one TrackRoute onto another (TASKS.md #549): the
+// last route point matched on one route and the first on the next, as a
+// FuturePoint stands on them (forwards: the point a segment starts at;
+// backwards, up the route: the one it ends at). `route` is an index into the
+// set's routes, `point` within it.
+typedef struct {
+	int fromRoute, fromPoint;
+	bool fromFwd;
+	int toRoute, toPoint;
+	bool toFwd;
+	int sample;       // the line's sample the race leaves the from-route at
+} TrackRouteHop;
+
+// The line's hops in order, at most `max`, and `onRace[route]` set for every
+// route it matches (`onRace` holds the set's nRoutes, or NULL). Returns the count.
+int ailine_hops(const AiLine* t, const TrackRouteSet* s, TrackRouteHop* out, int max,
+	u8* onRace);
+
+// How far the line at `dist` runs from the driving line of the route it is
+// matched to (metres), 1e9 where it matches none: where it is far, the race
+// leaves the routes and a FuturePoints walk cannot follow it (#549).
+float ailine_route_off(const AiLine* t, const TrackRouteSet* s, float dist);
+// The route (index into the set) the line at `dist` is matched to, -1 for none.
+int ailine_route_at(const AiLine* t, const TrackRouteSet* s, float dist);
+// The first of `hops` (ailine_hops' own, in order) the race has still to make
+// from `dist`, with 20 m in hand; `n` past the last on a sprint, 0 on a loop.
+int ailine_hop_next(const AiLine* t, const TrackRouteHop* hops, int n, float dist);
+bool ailine_loops(const AiLine* t);
+
 // What the line holds at one distance along the race route. Every lateral is
 // metres to the right of the race route there, as race_route_sample takes it.
 typedef struct {

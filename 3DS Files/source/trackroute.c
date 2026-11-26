@@ -17,47 +17,7 @@
 // route never holds more than 0x400 points.
 #define TR_ROUTE_POINTS_MAX 0x400
 
-typedef struct {
-	float x, y, z;
-	float halfL, halfR;   // +0x14 / +0x16
-	float off[2];         // racing lines 0 and 1, metres
-	float lane[8];        // the traffic lanes, lines 2..9, metres (draglanes)
-	float fwd[2];         // +0x18 / +0x1A, GetForwardDirection (x 1/32767)
-	float raceDist;       // +0x08, metres along the race (trackroute_nearest)
-	u8 postF, postB;      // bits 11 / 18
-	u8 postP;             // bit 27, GetPostedForPlayersForward (0x80312BC0)
-	u8 speed;             // +0x2C, line 0's speed, m/s
-	u16 route;            // which route of the set the point is on
-} TRPoint;
-
-// A route's header, as much of it as trackroute_nearest reads.
-typedef struct {
-	int first, count;           // its points in pts
-	float bbMin[2], bbMax[2];   // +0x60 / +0x68
-	u32 bits;                   // +0x70, TrackRoute::GetBits (0x80302548)
-	u8 line[10];                // +0x82 + line: non-zero where it has the line
-	int num;                    // its number, its points' bits 0-10 (GetRoute 0x801F7C60)
-} TRRoute;
-
-// A Signpost (chunk 0x34122: a u32, then 0x20 bytes each), what a car reads
-// where one route meets another: from route `oldRn`'s point `oldPt` onto
-// `newRn`'s `newPt` (indices within each route), and its bits (GetBits
-// 0x80302508 on +0x0C): 0-3 the sign type for racers (GetSignType
-// ePostednessType 0), 18 the side it stands on, 20 a sign never taken, 23 the
-// new route driven the other way round, 27 the rarer of the two odds.
-typedef struct {
-	s16 newPt, oldPt, newRn, oldRn;
-	u32 bits;
-} TRSign;
-
-struct TrackRouteSet {
-	TRPoint* pts;
-	int nPts;
-	TRRoute* routes;
-	int nRoutes;
-	TRSign* signs;
-	int nSigns;
-};
+#include "trackroute_int.h"
 
 static u32 rd32(const u8* p) {
 	return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24);
@@ -110,6 +70,12 @@ static void walkRoutes(const u8* buf, long size, TRPoint* out, TRRoute* outRoute
 					q->postB = (u8)((bits >> 18) & 1);
 					q->postP = (u8)((bits >> 27) & 1);
 					q->route = (u16)nr;
+					q->len = (float)rd16(p + 0x10) * (1.0f / 256.0f);
+					q->sign[0] = rd16(p + 0x1C);
+					q->sign[1] = rd16(p + 0x1E);
+					q->speedB = p[0x2D];
+					q->slope = (float)(s8)p[0x21] * (1.0f / 128.0f);
+					q->tInt = (u8)((bits >> 19) & 0x3F);
 				}
 				if (out && outRoutes) {
 					TRRoute* rt = &outRoutes[nr];
@@ -122,6 +88,11 @@ static void walkRoutes(const u8* buf, long size, TRPoint* out, TRRoute* outRoute
 					rt->bits = rd32(buf + r + 0x70);
 					memcpy(rt->line, buf + r + 0x82, sizeof(rt->line));
 					rt->num = n > 0 ? (int)(rd32(buf + r + TR_ROUTE_HDR + 0x0C) & 0x7FFu) : -1;
+					rt->rbits = rt->bits;
+					for (int l = 0; l < 2; l++) {
+						rt->lineHas[l][0] = buf[r + 0x74 + l * 8];
+						rt->lineHas[l][1] = buf[r + 0x75 + l * 8];
+					}
 				}
 				np += n;
 				nr++;
@@ -558,6 +529,8 @@ struct AiLine {
 	float* arc; // n + 1: world metres along the line to each sample, the last round to a loop's start
 	int nWall;  // the walls with no way round, in order along the route
 	AiLineCrossing wall[AILINE_WALL_KEEP];
+	int* seg;   // n: the matched segment's first point (pts index), -1 for none
+	u8* up;     // n: driven up its route
 };
 
 static float lerpf(float a, float b, float t) { return a + (b - a) * t; }
@@ -2190,6 +2163,10 @@ AiLine* ailine_build(const TrackRouteSet* s, const RaceRoute* route, float start
 	if (t->n < 2) t->n = 2;
 	t->step = len / (float)(t->loop ? t->n : t->n - 1);
 	t->v = (float*)malloc(sizeof(float) * F_COUNT * (size_t)t->n);
+	t->seg = (int*)malloc(sizeof(int) * (size_t)t->n);
+	t->up = (u8*)calloc((size_t)t->n, 1);
+	if (t->seg)
+		for (int k = 0; k < t->n; k++) t->seg[k] = -1;
 	u8* ok = (u8*)calloc((size_t)t->n, 1);
 	int* cand = (int*)malloc(sizeof(int) * (size_t)s->nPts);
 	// Each sample's race route point and right normal, then the two lines as
@@ -2436,6 +2413,10 @@ AiLine* ailine_build(const TrackRouteSet* s, const RaceRoute* route, float start
 		const TRPoint* a = &pts[ms->seg];
 		const TRPoint* e = &pts[ms->seg + 1];
 		matchFill(o, at + 4 * k, pts, ms->seg, ms->u, bestUp);
+		if (t->seg) {
+			t->seg[k] = ms->seg;
+			t->up[k] = bestUp;
+		}
 		ok[k] = 1;
 		matched++;
 		if (bestUp) upSamples++;
@@ -2479,6 +2460,10 @@ AiLine* ailine_build(const TrackRouteSet* s, const RaceRoute* route, float start
 			roadCross(s, r, lo, hi, st[(size_t)q * AILINE_MATCH_STATES + pick[q]].seg,
 				m0->up != 0, at + 4 * q, &seg, &u, &lat);
 			matchFill(t->v + q * F_COUNT, at + 4 * q, pts, seg, u, m0->up != 0);
+			if (t->seg) {
+				t->seg[q] = seg;
+				t->up[q] = m0->up != 0;
+			}
 			ok[q] = 1;
 			matched++;
 			kept++;
@@ -2688,6 +2673,8 @@ void ailine_free(AiLine* t) {
 	if (!t) return;
 	free(t->v);
 	free(t->arc);
+	free(t->seg);
+	free(t->up);
 	free(t);
 }
 
@@ -3259,10 +3246,130 @@ struct TrackForks {
 	TRFork f[FORK_MAX];
 };
 
-static int routeByNum(const TrackRouteSet* s, int num) {
-	for (int r = 0; r < s->nRoutes; r++)
+// The FuturePoint a matched sample stands on: forwards, its segment's first
+// point; up the route, its last.
+static void hopPoint(const TrackRouteSet* s, int seg, bool up, int* route, int* point,
+		bool* fwd) {
+	*route = s->pts[seg].route;
+	*fwd = !up;
+	*point = seg + (up ? 1 : 0) - s->routes[*route].first;
+}
+
+// How far the AiLine's line at sample k runs from its matched route's own
+// driving line (the segment's, line 0 forwards, line 1 up the route).
+static float hopOff(const AiLine* t, const TrackRouteSet* s, int k) {
+	const float* o = t->v + k * F_COUNT;
+	const TRPoint* a = &s->pts[t->seg[k]];
+	const TRPoint* e = a + 1;
+	const float ex = e->x - a->x, ey = e->y - a->y;
+	const float l = sqrtf(ex * ex + ey * ey);
+	if (l < 1e-3f) return 0.0f;
+	const float rx = ey / l, ry = -ex / l;   // right of the route
+	const float oa = t->up[k] ? -a->off[1] : a->off[0];
+	const float oe = t->up[k] ? -e->off[1] : e->off[0];
+	const float Ax = a->x + rx * oa, Ay = a->y + ry * oa;
+	const float Ex = e->x + rx * oe, Ey = e->y + ry * oe;
+	const float dx = Ex - Ax, dy = Ey - Ay, dd = dx * dx + dy * dy;
+	float u = dd > 1e-6f ? ((o[F_WX] - Ax) * dx + (o[F_WY] - Ay) * dy) / dd : 0.0f;
+	u = u < 0.0f ? 0.0f : (u > 1.0f ? 1.0f : u);
+	const float px = Ax + dx * u - o[F_WX], py = Ay + dy * u - o[F_WY];
+	return sqrtf(px * px + py * py);
+}
+
+// PORT (#549): a hop leaves its route where the race's line has left it, not at
+// the last sample matched to it: back over the from-route's samples while the
+// line runs farther than AILINE_HOP_OFF from them, and on over the to-route's.
+#define AILINE_HOP_OFF 4.0f
+static void hopMove(const AiLine* t, const TrackRouteSet* s, int* a, int* b) {
+	const int ra = s->pts[t->seg[*a]].route, rb = s->pts[t->seg[*b]].route;
+	const bool ua = t->up[*a], ub = t->up[*b];
+	int k = *a;
+	while (k > 0 && t->seg[k - 1] >= 0 && s->pts[t->seg[k - 1]].route == ra && t->up[k - 1] == ua &&
+			hopOff(t, s, k) > AILINE_HOP_OFF)
+		k--;
+	*a = k;
+	k = *b;
+	while (k + 1 < t->n && t->seg[k + 1] >= 0 && s->pts[t->seg[k + 1]].route == rb &&
+			t->up[k + 1] == ub && hopOff(t, s, k) > AILINE_HOP_OFF)
+		k++;
+	*b = k;
+}
+
+int ailine_hops(const AiLine* t, const TrackRouteSet* s, TrackRouteHop* out, int max,
+		u8* onRace) {
+	if (!t || !s || !t->seg) return 0;
+	int n = 0, first = -1, prev = -1;
+	for (int k = 0; k < t->n; k++) {
+		if (t->seg[k] < 0) continue;
+		if (onRace) onRace[s->pts[t->seg[k]].route] = 1;
+		if (first < 0) first = k;
+		if (prev >= 0) {
+			const int a = t->seg[prev], b = t->seg[k];
+			if (s->pts[a].route != s->pts[b].route || t->up[prev] != t->up[k]) {
+				if (n < max) {
+					int ka = prev, kb = k;
+					hopMove(t, s, &ka, &kb);
+					TrackRouteHop* h = &out[n++];
+					hopPoint(s, t->seg[ka], t->up[ka], &h->fromRoute, &h->fromPoint, &h->fromFwd);
+					hopPoint(s, t->seg[kb], t->up[kb], &h->toRoute, &h->toPoint, &h->toFwd);
+					h->sample = ka;
+				}
+			}
+		}
+		prev = k;
+	}
+	// Round a circuit's seam.
+	if (t->loop && first >= 0 && prev > first) {
+		const int a = t->seg[prev], b = t->seg[first];
+		if ((s->pts[a].route != s->pts[b].route || t->up[prev] != t->up[first]) && n < max) {
+			TrackRouteHop* h = &out[n++];
+			hopPoint(s, a, t->up[prev], &h->fromRoute, &h->fromPoint, &h->fromFwd);
+			hopPoint(s, b, t->up[first], &h->toRoute, &h->toPoint, &h->toFwd);
+			h->sample = prev;
+		}
+	}
+	return n;
+}
+
+float ailine_route_off(const AiLine* t, const TrackRouteSet* s, float dist) {
+	if (!t || !s || !t->seg) return 1e9f;
+	int k0, k1;
+	float u;
+	lineSpan(t, dist, &k0, &k1, &u);
+	if (t->seg[k0] < 0 || t->seg[k1] < 0) return 1e9f;
+	const float a = hopOff(t, s, k0), b = hopOff(t, s, k1);
+	return a > b ? a : b;
+}
+
+int ailine_route_at(const AiLine* t, const TrackRouteSet* s, float dist) {
+	if (!t || !s || !t->seg) return -1;
+	int k0, k1;
+	float u;
+	lineSpan(t, dist, &k0, &k1, &u);
+	const int k = u < 0.5f ? k0 : k1;
+	return t->seg[k] >= 0 ? s->pts[t->seg[k]].route : -1;
+}
+
+int ailine_hop_next(const AiLine* t, const TrackRouteHop* hops, int n, float dist) {
+	if (!t || !hops || n < 1) return 0;
+	int k0, k1;
+	float u;
+	lineSpan(t, dist, &k0, &k1, &u);
+	const int from = k0 - (int)(20.0f / t->step);
+	for (int h = 0; h < n; h++)
+		if (hops[h].sample >= from) return h;
+	return t->loop ? 0 : n;
+}
+
+bool ailine_loops(const AiLine* t) { return t && t->loop; }
+
+int trackroute_route_by_num(const TrackRouteSet* s, int num) {
+	for (int r = 0; s && r < s->nRoutes; r++)
 		if (s->routes[r].num == num) return r;
 	return -1;
+}
+static int routeByNum(const TrackRouteSet* s, int num) {
+	return trackroute_route_by_num(s, num);
 }
 
 // The line's sample nearest (x, y) within FORK_WINDOW m of race either side of

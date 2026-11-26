@@ -1026,6 +1026,16 @@ float aispeed_corner(const AiSpeedProfile* p, float curv) {
 }
 
 float aispeed_braking(const AiSpeedProfile* p) { return p ? p->brake : 0.0f; }
+float aispeed_friction(const AiSpeedProfile* p) { return p ? p->fr : 0.0f; }
+
+// For futurepoints.c (TASKS.md #549): the same Curvature and
+// GetSpeedLimitForCurvature its corners plan on.
+float ai_curvature(const float a[2], const float b[2], const float c[2]) {
+	return curvature(a, b, c);
+}
+float ai_speed_for_curvature(float friction, float curv, float maxSpeed) {
+	return speedLimitForCurvature(friction, curv, maxSpeed);
+}
 int   aispeed_count(const AiSpeedProfile* p) { return p ? p->n : 0; }
 
 // ---------------------------------------------------------------------------

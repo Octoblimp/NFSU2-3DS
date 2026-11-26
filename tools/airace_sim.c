@@ -21,6 +21,7 @@
 #include "cardb.h"
 #include "carsim.h"
 #include "difficulty.h"
+#include "futurepoints.h"
 #include "opponent.h"
 #include "race.h"
 #include "topology.h"
@@ -54,6 +55,10 @@ bool world_collide_coord(const World* w, int coord, const float from[3], float t
 
 // main.c's body band and footprint, by marker.
 #include "world_body.inc"
+
+// The cheat codes (cheats.c, #446) perfdb.c asks: none entered in a sim.
+bool cheats_perf_level(int level) { (void)level; return false; }
+bool cheats_contest_vinyls(void) { return false; }
 
 static World g_world;
 static int g_verbose;
@@ -313,7 +318,8 @@ int main(int argc, char** argv)
 	}
 	f.line = ailine_build(trs, route, grid[2], gridXY, nGrid, g_noWalls ? NULL : &walls,
 		g_verbose ? lg : NULL);
-	trackroute_close(trs);
+	// As main.c: the field keeps the route points (the drive target, TASKS.md #549).
+	f.routes = trs;
 	for (int k = 0; k < f.count; k++) f.car[k].sim.controlMode = mode;
 	// As main.c's race start: a Quick Race is never Street X.
 	f.mellowMu = carsim_mellow_mu(false, raceTypeMask);
@@ -644,9 +650,16 @@ int main(int argc, char** argv)
 					o->drv.throttleAdaptive.coef[2], o->drv.throttleAdaptive.term[0],
 					o->drv.throttleAdaptive.term[1], o->drv.throttleAdaptive.term[2]);
 			if (trace && ((int)(sec / dt) % 3) == 0)
-				fprintf(trace, "C,%s,%.2f,%.2f,%.2f,%.2f,%.1f,%.2f,%.1f,%d,%d\n", o->name, sec,
+				fprintf(trace, "C,%s,%.2f,%.2f,%.2f,%.2f,%.1f,%.2f,%.1f,%d,%d,%d,%.2f,%.1f\n", o->name, sec,
 					o->sim.pos[0], o->sim.pos[1], o->sim.pos[2], o->coord.dist,
-					o->drv.lateral_m, o->sim.speed, (int)wall, (int)o->unstuck);
+					o->drv.lateral_m, o->sim.speed, (int)wall, (int)o->unstuck, (int)o->fpOn,
+					o->lineLat, o->drv.desired);
+			if (trace && ((int)(sec / dt) % 3) == 0 && o->fpOn) {
+				const float p2[2] = { o->sim.pos[0], o->sim.pos[1] };
+				float a0[2], a1[2];
+				if (fp_point_ahead(o->fp, p2, 0.0f, 0.0f, a0) && fp_point_ahead(o->fp, p2, 20.0f, 0.0f, a1))
+					fprintf(trace, "F,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f\n", o->name, sec, a0[0], a0[1], a1[0], a1[1], fp_speed_ahead(o->fp, p2, 0.0f));
+			}
 			if (wall) m->wallSec += dt;
 			if (touching[k]) {
 				m->carSec += dt;

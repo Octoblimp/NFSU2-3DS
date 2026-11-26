@@ -26,6 +26,17 @@
 // Orientation, as fe_post.c has it: clip-space +y is the buffer's first row,
 // which a texture reads as t = 1, and the screen's left edge. A shift of p
 // pixels to the right is -2p/400 in clip y.
+//
+// The 800-wide top screen (Display > Resolution > Auto, display.h): the
+// hardware has no stereo in its 800-wide mode, so the two never draw in the
+// same frame, and the wide picture lives in the stereo pair's own VRAM. The
+// top target's colour is one 240x800 buffer, the left eye its first 400 rows
+// and the right eye its last; its depth is a 240x800 buffer as well, the
+// eyes' shared 240x400 depth its first 400 rows and the overlay's colour
+// right after. Wide, the top target is simply 800 rows tall: the world draws
+// once into all of it, and the 2D straight onto it through the top screen's
+// 400x240 projection, each logical pixel two of the panel's across. No VRAM
+// beyond what the stereo pair took before.
 
 #include "stereo.h"
 
@@ -77,7 +88,17 @@ static struct {
 	int checkTick;
 	u32 cmdEye;             // the command buffer's words left at the left eye's start
 	u32 skipped;            // frames stereo_right_fits() turned flat
+	bool packed;            // stereo_top_create()'s buffers: the wide mode can run
+	bool wide;              // this frame's top screen is 800x240
+	u32 wideSwitches;
+	void* topColour;        // 240x800 RGBA8
+	void* topDepth;         // 240x800 D24S8; the overlay from EYE_BYTES on
 } s;
+
+#define EYE_BYTES ((u32)PANEL_W * PANEL_H * 4)
+#define OV_BYTES  ((u32)OV_W * PANEL_H * 4)
+_Static_assert(EYE_BYTES + OV_BYTES >= 2 * EYE_BYTES,
+	"the depth block holds the wide picture's depth");
 
 // The GPU command buffer's words left. citro3d writes a whole frame into the
 // one buffer: a split moves the buffer's start, never its end.
@@ -95,6 +116,50 @@ static void say(void (*log)(const char*), const char* what) {
 	log(b);
 }
 
+// A target over `bytes` the caller owns: a texture's view of them, which
+// citro3d's C3D_RenderTargetCreateFromTex() takes without owning (as the
+// overlay's texture view below owns nothing).
+static C3D_RenderTarget* targetOver(void* bytes, int w, int h) {
+	C3D_Tex view;
+	memset(&view, 0, sizeof(view));
+	view.data = bytes;
+	view.fmt = GPU_RGBA8;
+	view.size = (u32)w * h * 4;
+	view.width = (u16)w;
+	view.height = (u16)h;
+	view.param = GPU_TEXTURE_MODE(GPU_TEX_2D);
+	return C3D_RenderTargetCreateFromTex(&view, GPU_TEXFACE_2D, 0, -1);
+}
+
+static void* vramIn(u32 bytes, vramAllocPos bank) {
+	void* p = vramAllocAt(bytes, bank);
+	return p ? p : vramAlloc(bytes);
+}
+
+C3D_RenderTarget* stereo_top_create(u32 transferFlags) {
+	s.topColour = vramIn(2 * EYE_BYTES, VRAM_ALLOC_A);
+	s.topDepth = s.topColour ? vramIn(EYE_BYTES + OV_BYTES, VRAM_ALLOC_B) : NULL;
+	C3D_RenderTarget* t = s.topDepth ? targetOver(s.topColour, PANEL_W, PANEL_H) : NULL;
+	if (!t) {
+		if (s.topDepth)
+			vramFree(s.topDepth);
+		if (s.topColour)
+			vramFree(s.topColour);
+		s.topColour = s.topDepth = NULL;
+		t = C3D_RenderTargetCreate(PANEL_W, PANEL_H, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
+	} else {
+		C3D_FrameBufDepth(&t->frameBuf, s.topDepth, GPU_RB_DEPTH24_STENCIL8);
+		s.packed = true;
+	}
+	if (t)
+		C3D_RenderTargetSetOutput(t, GFX_TOP, GFX_LEFT, transferFlags);
+	return t;
+}
+
+bool stereo_wide(void) {
+	return s.wide;
+}
+
 bool stereo_init(void (*log)(const char*), C3D_RenderTarget* left, u32 transferFlags) {
 	if (s.tried)
 		return s.ready;
@@ -107,14 +172,18 @@ bool stereo_init(void (*log)(const char*), C3D_RenderTarget* left, u32 transferF
 	}
 	s.left = left;
 	const u32 vram0 = vramSpaceFree();
-	s.right = C3D_RenderTargetCreate(PANEL_W, PANEL_H, GPU_RB_RGBA8, -1);
+	// Packed (stereo_top_create()), the right eye is the wide picture's last
+	// 400 rows and the overlay sits after the shared depth.
+	s.right = s.packed ? targetOver((u8*)s.topColour + EYE_BYTES, PANEL_W, PANEL_H)
+		: C3D_RenderTargetCreate(PANEL_W, PANEL_H, GPU_RB_RGBA8, -1);
 	if (!s.right) {
 		say(log, "no VRAM for the right eye -- the top screen stays flat");
 		return false;
 	}
 	C3D_FrameBufDepth(&s.right->frameBuf, left->frameBuf.depthBuf, GPU_RB_DEPTH24_STENCIL8);
 	C3D_RenderTargetSetOutput(s.right, GFX_TOP, GFX_RIGHT, transferFlags);
-	s.overlay = C3D_RenderTargetCreate(OV_W, PANEL_H, GPU_RB_RGBA8, -1);
+	s.overlay = s.packed ? targetOver((u8*)s.topDepth + EYE_BYTES, OV_W, PANEL_H)
+		: C3D_RenderTargetCreate(OV_W, PANEL_H, GPU_RB_RGBA8, -1);
 	if (!s.overlay) {
 		say(log, "no VRAM for the 2D's overlay -- the top screen stays flat");
 		return false;
@@ -147,8 +216,9 @@ bool stereo_init(void (*log)(const char*), C3D_RenderTarget* left, u32 transferF
 	if (log) {
 		char b[200];
 		snprintf(b, sizeof(b), "stereo: the right eye and the 2D's overlay: %lu KB VRAM "
-			"(%lu KB left)", (unsigned long)((vram0 - vramSpaceFree()) >> 10),
-			(unsigned long)(vramSpaceFree() >> 10));
+			"(%lu KB left)%s", (unsigned long)((vram0 - vramSpaceFree()) >> 10),
+			(unsigned long)(vramSpaceFree() >> 10), s.packed
+			? "; packed with the top target's, which holds 800x240 as well" : "");
 		log(b);
 	}
 	return true;
@@ -229,7 +299,24 @@ void stereo_frame_start(void) {
 		check();
 	s.on = false;
 	s.overlayOn = false;
-	const bool want = s.ready && g_display.stereo != 0;
+	const bool stereoSet = s.ready && g_display.stereo != 0;
+	// Auto (display.h): 800x240 unless the 3-D is set and the slider is up.
+	const float slider = s.dbgSlider > 0.0f ? s.dbgSlider : osGet3DSliderState();
+	const bool wide = s.packed && s.left && g_display.b.racingRes == DISPLAY_RES_AUTO &&
+		!(stereoSet && slider > 0.0f);
+	if (wide != s.wide) {
+		if (wide && s.mode3d) {
+			gfxSet3D(false);
+			s.mode3d = false;
+		}
+		gfxSetWide(wide);
+		C3D_FrameBufAttrib(&s.left->frameBuf, PANEL_W, wide ? 2 * PANEL_H : PANEL_H, false);
+		s.wide = wide;
+		if (s.log && s.wideSwitches++ < 40)
+			say(s.log, wide ? "top screen 800x240 (Resolution Auto, no 3-D showing)"
+				: "top screen 400x240");
+	}
+	const bool want = stereoSet && !s.wide;
 	if (want != s.mode3d) {
 		gfxSet3D(want);
 		s.mode3d = want;
@@ -314,6 +401,13 @@ void stereo_overlay_begin(void) {
 }
 
 bool stereo_scene_begin(C3D_RenderTarget* target) {
+	if (s.wide && target == s.left) {
+		// The 800 rows through the 400x240 projection: C2D_SceneBegin()'s
+		// viewport is the target's whole, its projection the size given.
+		C2D_SceneBegin(target);
+		C2D_SceneSize(PANEL_W, PANEL_H, true);
+		return true;
+	}
 	if (!s.overlayOn || target != s.left)
 		return false;
 	C2D_Flush();

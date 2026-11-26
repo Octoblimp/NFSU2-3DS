@@ -284,6 +284,9 @@ So the split is:
 - **Faithful**: `PsychoDriver` itself -- `GetMovementIndex`, `CalcSteerToPoint`,
   `GetSteeringError`, `CalcThrottleAndBrake`, the rate limit, traction control,
   and every table, graph and weight array above, with retail's values.
+- **#549 (2026-11-26)**: `FuturePoints` is ported (futurepoints.c) and on. A racer drives
+  it wherever its line lies inside the road the port measured (`kFpTrust`, opponent.c), and
+  the drive target below elsewhere.
 - **PORT**: the drive target. Instead of rebuilding `FuturePoints`, the port
   samples the ported `RaceRoute` spline (`race_route_sample`, which already
   takes a lateral offset) at the look-ahead distance `CalcSteerToPoint` asks for,

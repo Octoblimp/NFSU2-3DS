@@ -199,9 +199,10 @@ void display_clamp(DisplaySettings* d) {
 		if (*v > display_cap(i))
 			*v = display_cap(i);
 	}
-	// The resolution clamp walks the card's mode table down from the set one;
-	// the 3DS has mode 0 only.
-	d->b.racingRes = 0;
+	// The resolution clamp walks the card's mode table down from the set one.
+	// PORT: the 3DS's top screen has two, 400x240 and Auto (display.h).
+	if (d->b.racingRes > DISPLAY_RES_AUTO)
+		d->b.racingRes = DISPLAY_RES_400;
 	if (d->performanceLevel > DISPLAY_LEVEL_MAX)
 		d->performanceLevel = DISPLAY_LEVEL_MAX;
 	if (d->stereo > 1)
@@ -367,8 +368,9 @@ int display_index_named(const char* name) {
 }
 
 void display_describe(const DisplaySettings* d, char* out, int outSize) {
-	int n = snprintf(out, outSize, "level %lu, 3D %s %s depth %lu focus %lu hud %lu:",
-		(unsigned long)d->performanceLevel, d->stereo ? "on" : "off",
+	int n = snprintf(out, outSize, "level %lu, res %s, 3D %s %s depth %lu focus %lu hud %lu:",
+		(unsigned long)d->performanceLevel,
+		d->b.racingRes == DISPLAY_RES_AUTO ? "auto" : "400x240", d->stereo ? "on" : "off",
 		d->stereoStyle == DISPLAY_STEREO_POP ? "pop-out" : "into-screen",
 		(unsigned long)d->stereoDepth, (unsigned long)d->stereoFocus,
 		(unsigned long)d->stereoHud);

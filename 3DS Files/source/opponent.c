@@ -1,8 +1,22 @@
 #include "opponent.h"
 #include "difficulty.h"
+#include "futurepoints.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+// An opponent's FuturePoints' fork callback context and the car it plans on
+// (TASKS.md #549, fpStep).
+typedef struct {
+	OpponentField* f;
+	int i;
+	FPCar car;
+	bool carSet;
+	float retryAt;      // raceSec before which a lost walk is not tried again
+	float bendLimit; // PORT: the drive path's own speed limit now (fpAim), m/s
+	float bendAt;    // raceSec it was made
+} FpCtx;
 
 // RaceStarter::AddCareerEventAIOpponents (Speed.elf 0x8011A22C) and the car
 // picker it calls, PickRandomCarsOfSomeSort (0x80119F24). See opponent.h for
@@ -1644,6 +1658,12 @@ void opponent_start_driving(OpponentField* f, const CarDb* db,
 		o->fork = -1;
 		o->forkLat = 0.0f;
 		o->forkSeen = 0;
+		if (o->fp) fp_clear(o->fp);
+		if (o->fpCtx) {
+			((FpCtx*)o->fpCtx)->carSet = false;
+			((FpCtx*)o->fpCtx)->retryAt = 0.0f;
+		}
+		o->fpOn = false;
 
 		float xy[2] = { o->sim.pos[0], o->sim.pos[1] };
 		race_coord_init(route, &o->coord, xy);
@@ -1821,6 +1841,212 @@ static float chordAhead(const OpponentField* f, const RaceRoute* route,
 		if (ok) return s;
 	}
 	return LINE_CHORD_MIN;
+}
+
+// TASKS.md #549: retail's aim point. DrivingChoice::BuildDriveTarget
+// (0x8001CFBC) fills the DriveTarget with the race's TrackRoutePoints from
+// the one the car is passing on (FillUpDriveTarget 0x8001D500, one point per
+// FuturePoint, at the car's lateral from ChangeCurrentL), and drops those not
+// ahead of the car (GetFirstPoint 0x8001B938, ShiftLeft). CalcSteerToPoint
+// then takes DriveTarget::InterpolatePoint (0x8001ADE0) at the look-ahead:
+// the straight distance to the first point, then along the points, each one
+// adding DT_BEND x (its segment and the one before it, less the chord across
+// the two) -- a bend counts long, so the point comes in round it by itself.
+// The weight is DT_BEND_START (DAT_803171A4) until DT_BEND_SEC
+// (DAT_803171A0) after the start (the race status' +4, r13-0x6084, unset
+// before it), DT_BEND (DAT_80317188) after. Past the last point it runs on
+// down the last segment; ahead of the first, straight at it.
+//
+// PORT: the points are the racing line's, at the TrackRoutePoints' race
+// distances: the port has no FuturePoints, and its line's own corner fit
+// stands in for FinishInterpolatingCorners' laterals (0x80035C84).
+#define DT_POINTS     20
+#define DT_BEND_START 7.0f
+#define DT_BEND       1.0f
+#define DT_BEND_SEC   5.0f
+#define DT_SAME_M     1.0f   // route points this close along the race are one place
+#define DT_NEAR_M     25.0f  // a point further than this off the line is another road's
+
+// Off (TASKS.md #549): over the port's line it is worse than chordAhead. Across
+// every track it ran 2,211 s off the line and needed 369 unsticks, against 276 s
+// and 28: retail's points carry FuturePoints' corner laterals
+// (FinishInterpolatingCorners 0x80035C84 and the spline driving lines), set wide
+// for a chord steered at in full, where the port's line holds the apex, so the
+// 25 m chord runs into the inside of every tight bend. Where the port's line
+// leaves the race route's road (4002F 3808-4706 m) the race route's points are
+// off it altogether and the target has none for 255 m. It wants FuturePoints
+// ported with it.
+static const bool kRetailAim = false;
+
+static int cmpFloat(const void* a, const void* b) {
+	const float x = *(const float*)a, y = *(const float*)b;
+	return x < y ? -1 : x > y ? 1 : 0;
+}
+
+static bool dtBuild(OpponentField* f) {
+	if (f->dtTried)
+		return f->dtCount > 1;
+	f->dtTried = true;
+	if (!f->routes || !f->line)
+		return false;
+	const TrackRouteSource src = trackroute_source(f->routes);
+	int total = 0;
+	for (int r = 0; r < src.nRoutes; r++) {
+		int first, count;
+		float bbMin[2], bbMax[2];
+		u32 bits;
+		src.route(src.ctx, r, &first, &count, bbMin, bbMax, &bits);
+		if (count > 0) total += count;
+	}
+	float* d = total > 0 ? (float*)malloc(sizeof(float) * (size_t)total) : NULL;
+	if (!d)
+		return false;
+	int n = 0;
+	for (int r = 0; r < src.nRoutes; r++) {
+		int first, count;
+		float bbMin[2], bbMax[2];
+		u32 bits;
+		src.route(src.ctx, r, &first, &count, bbMin, bbMax, &bits);
+		for (int p = first; p < first + count; p++) {
+			TrackRoutePt pt;
+			src.point(src.ctx, p, &pt);
+			if (!(pt.raceDist > 0.0f))
+				continue;
+			float lp[2];
+			if (!ailine_pose(f->line, pt.raceDist, 0.0f, lp, NULL))
+				continue;
+			const float dx = pt.pos[0] - lp[0], dy = pt.pos[1] - lp[1];
+			if (dx * dx + dy * dy > DT_NEAR_M * DT_NEAR_M)
+				continue;
+			d[n++] = pt.raceDist;
+		}
+	}
+	qsort(d, (size_t)n, sizeof(float), cmpFloat);
+	int m = 0;
+	for (int i = 0; i < n; i++)
+		if (m == 0 || d[i] - d[m - 1] >= DT_SAME_M)
+			d[m++] = d[i];
+	f->dtDist = d;
+	f->dtCount = m;
+	if (f->log) {
+		char b[120];
+		snprintf(b, sizeof(b), "ai: drive target from %d route points along the race (%.1f m "
+			"apart on average)", m, m > 1 ? (double)((d[m - 1] - d[0]) / (float)(m - 1)) : 0.0);
+		f->log(b);
+	}
+	return m > 1;
+}
+
+static void aimThrough(const float car[2], const float (*P)[2], int n, float ahead, float kb,
+		float out[2]);
+
+static bool retailAim(OpponentField* f, const RaceRoute* route, const Opponent* o,
+		float ahead, float out[2]) {
+	if (!kRetailAim || !dtBuild(f))
+		return false;
+	const bool loops = race_route_loops(route);
+	const float len = race_route_length(route);
+	float base = o->lineDist;
+	if (loops && len > 0.0f) {
+		base = fmodf(base, len);
+		if (base < 0.0f) base += len;
+	}
+	// The point the car is passing: the last at or before it.
+	int lo = 0, hi = f->dtCount;
+	while (lo < hi) {
+		const int mid = (lo + hi) / 2;
+		if (f->dtDist[mid] <= base) lo = mid + 1;
+		else hi = mid;
+	}
+	const float car[2] = { o->sim.pos[0], o->sim.pos[1] };
+	float hx = o->sim.vel[0], hy = o->sim.vel[1];
+	if (o->sim.speed < AHEAD_SLOW) {
+		hx = o->sim.rot[0][0];
+		hy = o->sim.rot[0][1];
+	}
+	float P[DT_POINTS][2];
+	int n = 0;
+	float run = 0.0f;
+	for (int j = 0; n < DT_POINTS && j < f->dtCount; j++) {
+		int idx = lo - 1 + j;
+		float dist;
+		if (idx < 0) {
+			if (!loops) continue;
+			idx += f->dtCount;
+			dist = f->dtDist[idx] - len;
+		} else if (idx >= f->dtCount) {
+			if (!loops) break;
+			idx -= f->dtCount;
+			dist = f->dtDist[idx] + len;
+		} else {
+			dist = f->dtDist[idx];
+		}
+		float p[2];
+		if (!drivePoint(f, route, o, dist + (o->lineDist - base), p))
+			break;
+		const float dx = p[0] - (n ? P[n - 1][0] : car[0]);
+		const float dy = p[1] - (n ? P[n - 1][1] : car[1]);
+		if (n == 0 && dx * hx + dy * hy <= 0.0f)
+			continue;   // GetFirstPoint: not ahead of the car
+		P[n][0] = p[0];
+		P[n][1] = p[1];
+		n++;
+		run += sqrtf(dx * dx + dy * dy);
+		if (run > ahead && n >= 2)
+			break;      // the bends only lengthen it: enough points
+	}
+	if (n == 0)
+		return false;   // PORT: retail aims at the car itself; the caller goes straight on
+	aimThrough(car, (const float (*)[2])P, n, ahead,
+		f->raceSec < DT_BEND_SEC ? DT_BEND_START : DT_BEND, out);
+	return true;
+}
+
+// DriveTarget::InterpolatePoint (0x8001C8C4): `ahead` metres along the drive
+// target from the car, each point's run lengthened by `kb` times how far the
+// path bends there.
+static void aimThrough(const float car[2], const float (*P)[2], int n, float ahead, float kb,
+		float out[2]) {
+	float d[DT_POINTS];
+	if (n > DT_POINTS) n = DT_POINTS;
+	float vx = P[0][0] - car[0], vy = P[0][1] - car[1];
+	d[0] = sqrtf(vx * vx + vy * vy);
+	if (n == 1) {
+		const float k = d[0] > 1e-4f ? ahead / d[0] : 0.0f;
+		out[0] = car[0] + vx * k;
+		out[1] = car[1] + vy * k;
+		return;
+	}
+	int i = 0;
+	if (d[0] < ahead) {
+		float prevSeg = d[0];
+		const float* pp = car;
+		for (i = 1; i < n; i++) {
+			const float sx = P[i][0] - P[i - 1][0], sy = P[i][1] - P[i - 1][1];
+			const float cx = P[i][0] - pp[0], cy = P[i][1] - pp[1];
+			const float seg = sqrtf(sx * sx + sy * sy), chord = sqrtf(cx * cx + cy * cy);
+			d[i] = kb * (seg + prevSeg - chord) + seg + d[i - 1];
+			if (ahead <= d[i]) break;
+			pp = P[i - 1];
+			prevSeg = seg;
+		}
+	}
+	if (i > n - 1) {
+		const int l = n - 1;
+		vx = P[l][0] - P[l - 1][0];
+		vy = P[l][1] - P[l - 1][1];
+		const float sl = sqrtf(vx * vx + vy * vy);
+		const float k = sl > 1e-4f ? (ahead - d[l]) / sl : 0.0f;
+		out[0] = P[l][0] + vx * k;
+		out[1] = P[l][1] + vy * k;
+	} else {
+		const float* a = i > 0 ? P[i - 1] : car;
+		const float da = i > 0 ? d[i - 1] : 0.0f;
+		const float span = d[i] - da;
+		const float t = span > 1e-4f ? (ahead - da) / span : 0.0f;
+		out[0] = a[0] + (P[i][0] - a[0]) * t;
+		out[1] = a[1] + (P[i][1] - a[1]) * t;
+	}
 }
 
 // GracePeriodIsActive (0x8022B510), driver id 100 + i: no GetUnstuck, and no
@@ -2734,8 +2960,13 @@ static bool slowerThan(float v, float lim) {
 // (0x8040CA84, 0x8040CA98) skip the first two.
 static bool unstuckWanted(const OpponentField* f, int i, const Opponent* o) {
 	if (graceActive(f, i)) return false;
-	return opponent_unstuck_score(&o->sim, outsideRoad(f, o), headingClass(f, o, true),
-		o->sinceReset, o->sinceUnstuck);
+	// PORT (TASKS.md #549): not the heading test on FuturePoints. Its steer
+	// point is up retail's line, round the corner and past 60 degrees off the
+	// nose where the port's own was ahead, and the test read every tight
+	// corner taken wide as driving off the road (44 of 62 solo GetUnstucks,
+	// at 18..52 m/s with no wall touched).
+	return opponent_unstuck_score(&o->sim, outsideRoad(f, o),
+		o->fpOn ? 0 : headingClass(f, o, true), o->sinceReset, o->sinceUnstuck);
 }
 
 // unstuckWanted's tests past the grace period, from the car's own figures:
@@ -3190,6 +3421,27 @@ static void updateBoost(OpponentField* f, int i, float dt) {
 // the same 12 s less 0.5 s a driver id), any other value that many seconds of
 // the race; then bRandom(1) under the sign's odds takes it. A sign that comes
 // while the car is on another branch is passed by.
+// The roll for fork `j` (DecideSignpostAsRacer's random arm), once.
+static void forkDecide(OpponentField* f, int i, Opponent* o, int j) {
+	const u64 bit = (u64)1 << j;
+	o->forkSeen |= bit;
+	TrackFork k;
+	if (!trackroute_fork_info(f->forks, j, &k)) return;
+	const bool open = f->forkAfterSec < 0.0f ? !graceActive(f, i)
+		: f->forkAfterSec < f->raceSec;
+	const float roll = (float)bRandomNext(&o->rng, 0x10000u) * (1.0f / 65536.0f);
+	const bool take = open && o->fork < 0 && roll < k.p;
+	if (take) o->fork = j;
+	if (f->log) {
+		char b[128];
+		snprintf(b, sizeof(b), "ai: %s %s fork %d onto r%d at %.0f m (roll %.2f of %.2f%s)",
+			o->name, take ? "takes" : "passes", j, k.branch, (double)k.sign,
+			(double)roll, (double)k.p, !open ? ", not yet open" :
+			(o->fork >= 0 && !take ? ", on another" : ""));
+		f->log(b);
+	}
+}
+
 static void forkStep(OpponentField* f, int i, Opponent* o) {
 	if (!f->forks) return;
 	TrackLaneRoad r;
@@ -3218,23 +3470,363 @@ static void forkStep(OpponentField* f, int i, Opponent* o) {
 			continue;
 		}
 		if (a < 0.0f || a > FORK_DECIDE_M || (o->forkSeen & bit)) continue;
-		o->forkSeen |= bit;
+		forkDecide(f, i, o, j);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FuturePoints (TASKS.md #549): retail's racing line, walked over the
+// TrackRoutes ahead of each racer (futurepoints.c), is what the car steers at
+// (BuildDriveTarget, then InterpolatePoint) and reads its speed from
+// (GetDrivingLineSpeed). Where it cannot be walked -- no Routes file, a drag's
+// lanes, or the walk lost -- the car drives the AiLine as before.
+//
+// PORT: the walk is checked against the race's own line FP_AGREE_AHEAD up the
+// road. Retail's signs keep a racer on the race (the barriers' routes are
+// off-limits, GetBool(10)); a walk that leaves it anyway is dropped and made
+// again where the car is.
+static const bool kFuturePoints = true;
+static const bool kFpSpeed = true;    // its speeds, under the profile's
+static const bool kFpChord = true;    // chordAhead over its drive target
+static const bool kFpBend = false;    // tried: a cap off the path's own bends (23..44% slower)
+static const bool kFpEdges = true;    // the drive target inside ownRoadSpan
+static const bool kFpAiLat = false;   // tried: the choice shifted onto its line (no gain)
+static const bool kFpTrust = true;    // only where its line is on the port's road
+#define FP_LAUNCH_SEC 20.0f
+#define FP_TRUST_AHEAD 80.0f
+#define FP_TRUST_STEP  8.0f
+#define FP_TRUST_M     0.5f
+#define FP_TRUST_SEC   3.0f
+#define FP_TRUST_IN_M  0.5f
+#define FP_BEND_SPAN  15.0f
+#define FP_BEND_SPAN_NEAR 15.0f
+#define FP_BEND_STEP  5.0f
+#define FP_BEND_REACH 120.0f
+#define FP_MAXD_BASE   100.0f   // metres walked past the car, plus
+#define FP_MAXD_SEC    2.0f     // two seconds' run at its speed
+#define FP_LOST_M      30.0f    // off the walk's line farther than that: lost
+#define FP_AGREE_AHEAD 40.0f
+#define FP_AGREE_M     25.0f
+#define FP_RETRY_SEC   0.5f
+// PORT: where the race's line runs farther than FP_ROUTE_OFF from the routes'
+// own driving lines (the race leaves them, 4002F 3.8-4.7 km), from FP_ROUTE_BACK
+// behind the car to FP_ROUTE_AHEAD plus FP_ROUTE_SEC of its speed ahead, the car
+// drives the AiLine instead, handed over before it gets there.
+#define FP_ROUTE_OFF   8.0f
+#define FP_ROUTE_BACK  10.0f
+#define FP_ROUTE_AHEAD 40.0f
+#define FP_ROUTE_SEC   2.0f
+#define FP_ROUTE_STEP  4.0f
+
+static bool fpRoutesHold(const OpponentField* f, const Opponent* o) {
+	if (!f->line) return true;
+	const float from = o->lineDist - FP_ROUTE_BACK > 0.0f ? o->lineDist - FP_ROUTE_BACK : 0.0f;
+	const float to = o->lineDist + FP_ROUTE_AHEAD + FP_ROUTE_SEC * o->sim.speed;
+	for (float d = from; d <= to; d += FP_ROUTE_STEP)
+		if (ailine_route_off(f->line, f->routes, d) > FP_ROUTE_OFF) return false;
+	return true;
+}
+
+// SignPostDecision's random arm on a type-4 sign: the race's own fork onto
+// that route, rolled once (forkDecide) and kept.
+static bool fpFork(void* ctx, int sign, int newRoute, float p) {
+	(void)sign;
+	(void)p;
+	FpCtx* c = (FpCtx*)ctx;
+	OpponentField* f = c->f;
+	Opponent* o = &f->car[c->i];
+	if (!f->forks) return false;
+	const int n = trackroute_fork_count(f->forks);
+	for (int j = 0; j < n && j < 64; j++) {
 		TrackFork k;
-		if (!trackroute_fork_info(f->forks, j, &k)) continue;
-		const bool open = f->forkAfterSec < 0.0f ? !graceActive(f, i)
-			: f->forkAfterSec < f->raceSec;
-		const float roll = (float)bRandomNext(&o->rng, 0x10000u) * (1.0f / 65536.0f);
-		const bool take = open && o->fork < 0 && roll < k.p;
-		if (take) o->fork = j;
-		if (f->log) {
-			char b[128];
-			snprintf(b, sizeof(b), "ai: %s %s fork %d onto r%d at %.0f m (roll %.2f of %.2f%s)",
-				o->name, take ? "takes" : "passes", j, k.branch, (double)k.sign,
-				(double)roll, (double)k.p, !open ? ", not yet open" :
-				(o->fork >= 0 && !take ? ", on another" : ""));
+		if (!trackroute_fork_info(f->forks, j, &k) || k.branch != newRoute) continue;
+		if (!(o->forkSeen & ((u64)1 << j))) forkDecide(f, c->i, o, j);
+		return o->fork == j;
+	}
+	return false;   // not one of the race's forks: stay on the race
+}
+
+static void fpLost(OpponentField* f, Opponent* o, FpCtx* c, const char* why) {
+	(void)f;
+	(void)why;
+	fp_clear(o->fp);
+	c->retryAt = f->raceSec + FP_RETRY_SEC;
+	o->fpOn = false;
+}
+
+// Update (0x80033FD0) for car `i`: o->fpOn when its points are good.
+static void fpStep(OpponentField* f, int i, Opponent* o) {
+	if (!kFuturePoints || !f->routes || o->lane >= 0 || o->remote || !o->prof) {
+		o->fpOn = false;
+		return;
+	}
+	// PORT (TASKS.md #549): not off the grid. The port's launch holds each
+	// racer's slot (chooseHere) while the field spreads; on FuturePoints from
+	// the lights the whole field closed onto the one line and touched five
+	// times as often in the first minute (4083B: 191 contacts to 30).
+	if (f->raceSec < FP_LAUNCH_SEC) {
+		o->fpOn = false;
+		return;
+	}
+	if (!o->fp) {
+		FpCtx* nc = (FpCtx*)calloc(1, sizeof(FpCtx));
+		if (!nc) return;
+		nc->f = f;
+		nc->i = i;
+		o->fp = fp_new(f->routes, fpFork, nc);
+		if (!o->fp) {
+			free(nc);
+			return;
+		}
+		o->fpCtx = nc;
+		if (!f->fpRaceTried && f->line) {
+			f->fpRaceTried = true;
+			const int max = 512;
+			f->fpHops = (TrackRouteHop*)malloc(sizeof(TrackRouteHop) * (size_t)max);
+			const TrackRouteSource rs = trackroute_source(f->routes);
+			f->fpOnRace = (u8*)calloc((size_t)(rs.nRoutes > 0 ? rs.nRoutes : 1), 1);
+			if (f->fpHops && f->fpOnRace)
+				f->fpNHops = ailine_hops(f->line, f->routes, f->fpHops, max, f->fpOnRace);
+			if (f->log) {
+				char b[96];
+				snprintf(b, sizeof(b), "ai: futurepoints follow %d route hop(s) of the race",
+					f->fpNHops);
+				f->log(b);
+			}
+		}
+		if (f->fpHops && f->fpOnRace) fp_set_race(o->fp, f->fpHops, f->fpNHops, f->fpOnRace,
+			ailine_loops(f->line));
+	}
+	FpCtx* c = (FpCtx*)o->fpCtx;
+	c->f = f;
+	if (!c->carSet) {
+		c->car.friction = aispeed_friction(o->prof);
+		c->car.brake = aispeed_braking(o->prof);
+		c->car.accelTop = carsim_accel_table(&o->sim, c->car.accel);
+		c->carSet = true;
+	}
+	const float pos[3] = { o->sim.pos[0], o->sim.pos[1], o->sim.pos[2] };
+	if (!fpRoutesHold(f, o)) {
+		if (o->fpOn && f->log) {
+			char b[96];
+			snprintf(b, sizeof(b), "ai: %s leaves futurepoints: the race leaves the routes at %.0f m",
+				o->name, (double)o->lineDist);
 			f->log(b);
 		}
+		fp_clear(o->fp);
+		o->fpOn = false;
+		return;
 	}
+	if (fp_count(o->fp) < 2) {
+		if (f->raceSec < c->retryAt) {
+			o->fpOn = false;
+			return;
+		}
+		float h[2] = { o->sim.rot[0][0], o->sim.rot[0][1] };
+		if (o->sim.speed > 3.0f) {
+			h[0] = o->sim.vel[0] / o->sim.speed;
+			h[1] = o->sim.vel[1] / o->sim.speed;
+		}
+		if (!fp_seed(o->fp, pos, h,
+				f->line ? ailine_route_at(f->line, f->routes, o->lineDist) : -1,
+				f->line ? ailine_hop_next(f->line, f->fpHops, f->fpNHops, o->lineDist) : 0)) {
+			fpLost(f, o, c, "no route point");
+			return;
+		}
+	}
+	const float maxD = FP_MAXD_BASE + FP_MAXD_SEC * o->sim.speed;
+	if (!fp_update(o->fp, pos, maxD, &c->car)) {
+		fpLost(f, o, c, "walk ended");
+		return;
+	}
+	if (fp_distance(o->fp, pos) > FP_LOST_M) {
+		fpLost(f, o, c, "off its line");
+		return;
+	}
+	if (f->line) {
+		const float at = lineAhead(f, o, FP_AGREE_AHEAD);
+		float a[2], b[2];
+		if (fp_point_ahead(o->fp, pos, FP_AGREE_AHEAD, 0.0f, a) &&
+				ailine_pose(f->line, at, forkShift(f, o, at) + o->forkLat, b, NULL)) {
+			const float dx = a[0] - b[0], dy = a[1] - b[1];
+			if (dx * dx + dy * dy > FP_AGREE_M * FP_AGREE_M) {
+				fpLost(f, o, c, "off the race");
+				return;
+			}
+		}
+	}
+	// PORT (TASKS.md #549): only where retail's line is on the road the port
+	// measured. A route's line is laid for retail's collision and its own
+	// widths; where it runs past the edges the port's line keeps inside
+	// (ownRoadSpan, off the collision) the racer drives the port's line
+	// until it is back (4044F 6,430 m: 5 m into the wall of a 6 m road).
+	if (kFpTrust && f->line) {
+		// And only with the car on the road itself: one knocked over the edge
+		// ran on beside retail's line outside the barrier, the drive target
+		// easing in from where it was (4178F 5,730 m, 100 m and a reset).
+		if (outsideRoad(f, o) > (o->fpOn ? FP_TRUST_M : -FP_TRUST_IN_M)) {
+			fpLost(f, o, c, "car off the road");
+			c->retryAt = f->raceSec + FP_TRUST_SEC;
+			return;
+		}
+		float d = o->lineDist;
+		for (float s = 0.0f; s <= FP_TRUST_AHEAD; s += FP_TRUST_STEP) {
+			float a[2], lat, lo, hi;
+			if (!fp_point_ahead(o->fp, pos, s, 0.0f, a)) break;
+			d = ailine_track(f->line, d, 10.0f, 60.0f, a, &lat, NULL);
+			if (!ownRoadSpan(f, o, d, &lo, &hi)) continue;
+			// Back on only with that much room inside them.
+			const float tol = o->fpOn ? FP_TRUST_M : -FP_TRUST_IN_M;
+			if (lat < lo - tol || lat > hi + tol) {
+				fpLost(f, o, c, "off the road");
+				c->retryAt = f->raceSec + FP_TRUST_SEC;
+				return;
+			}
+		}
+	}
+	if (!o->fpOn && f->log && o->lineDist < 50.0f) {
+		char b[96];
+		snprintf(b, sizeof(b), "ai: %s futurepoints on, %d points", o->name, fp_count(o->fp));
+		f->log(b);
+	}
+	o->fpOn = true;
+}
+
+// The point `s` metres along the path car, P[0], P[1], ... (straight
+// segments); false past its end.
+static bool fpPathAt(const float car[2], const float (*P)[2], int n, float s, float out[2]) {
+	float a[2] = { car[0], car[1] };
+	for (int i = 0; i < n; i++) {
+		const float dx = P[i][0] - a[0], dy = P[i][1] - a[1];
+		const float l = sqrtf(dx * dx + dy * dy);
+		if (s <= l) {
+			const float t = l > 1e-4f ? s / l : 0.0f;
+			out[0] = a[0] + dx * t;
+			out[1] = a[1] + dy * t;
+			return true;
+		}
+		s -= l;
+		a[0] = P[i][0];
+		a[1] = P[i][1];
+	}
+	return false;
+}
+
+// PORT (#549): chordAhead over the drive target. Retail's chord is steered at
+// across corners whose laterals FinishInterpolatingCorners has set wide; where
+// a bend has no corner sign (4083B's hairpin) the chord would cut its inside.
+static float fpChordAhead(const float car[2], const float (*P)[2], int n, float ahead) {
+	if (ahead <= LINE_CHORD_MIN) return ahead;
+	float p[LINE_CHORD_POINTS][2];
+	int m = 0;
+	for (float s = LINE_CHORD_STEP; s < ahead && m < LINE_CHORD_POINTS; s += LINE_CHORD_STEP) {
+		if (!fpPathAt(car, P, n, s, p[m])) break;
+		m++;
+	}
+	for (int e = m; e >= 0; e--) {
+		const float s = e == m ? ahead : (float)(e + 1) * LINE_CHORD_STEP;
+		if (s < LINE_CHORD_MIN) return LINE_CHORD_MIN;
+		float b[2];
+		if (e == m) {
+			if (!fpPathAt(car, P, n, ahead, b)) continue;
+		} else {
+			b[0] = p[e][0];
+			b[1] = p[e][1];
+		}
+		const float dx = b[0] - car[0], dy = b[1] - car[1];
+		const float l = sqrtf(dx * dx + dy * dy);
+		if (l < 0.1f) return s;
+		bool ok = true;
+		for (int i = 0; i < e && ok; i++) {
+			const float c = ((p[i][0] - car[0]) * dy - (p[i][1] - car[1]) * dx) / l;
+			if (fabsf(c) > LINE_CHORD_SAG) ok = false;
+		}
+		if (ok) return s;
+	}
+	return LINE_CHORD_MIN;
+}
+
+// CalcSteerToPoint over FuturePoints: BuildDriveTarget at the choice's
+// lateral, then InterpolatePoint `ahead` along it.
+static bool fpAim(OpponentField* f, const Opponent* o, float ahead, float out[2],
+		float* lateral) {
+	if (!o->fpOn) return false;
+	const float pos[3] = { o->sim.pos[0], o->sim.pos[1], o->sim.pos[2] };
+	float P[DT_POINTS][2];
+	// PORT (TASKS.md #549): the choice is chosen on the port's line -- the
+	// avoidance reads every car's lateral off it -- so put it where that is
+	// on FuturePoints' line: the FP line's own lateral off the port's, ahead.
+	float fpShift = 0.0f;
+	if (kFpAiLat && f->line) {
+		float at[2], lat;
+		if (fp_point_ahead(o->fp, pos, ahead > 0.0f ? ahead : 0.0f, 0.0f, at)) {
+			ailine_track(f->line, o->lineDist, 10.0f, 60.0f + (ahead > 0.0f ? ahead : 0.0f),
+				at, &lat, NULL);
+			fpShift = lat;
+		}
+	}
+	const int n = fp_drive_target(o->fp, pos, o->sim.speed, o->goalL - o->forkLat - fpShift, o->latRate,
+		LINE_EDGE_MARGIN + halfWidth(o), P, DT_POINTS);
+	if (n < 1) return false;
+	// PORT (TASKS.md #549): inside the road's own edges as well. The drive
+	// target keeps to the route's widths (minMax), which on 4087F's narrow
+	// right-hander at 880 m run 4 m past the kerb: a racer slotted +11 m
+	// cut the bend into the inside wall. The edges the port measured off the
+	// collision (ownRoadSpan) are what its own line keeps to.
+	if (kFpEdges && f->line) {
+		float d = o->lineDist;
+		for (int i = 0; i < n; i++) {
+			float lat, lo, hi;
+			d = ailine_track(f->line, d, 10.0f, 60.0f, P[i], &lat, NULL);
+			if (!ownRoadSpan(f, o, d, &lo, &hi)) continue;
+			if (lat >= lo && lat <= hi) continue;
+			float dir[2];
+			ailine_pose(f->line, d, lat < lo ? lo : hi, P[i], dir);
+			fp_drive_target_move(o->fp, i, P[i]);
+		}
+	}
+	const float off = fp_drive_target_offset(o->fp, pos);
+	float on[2];
+	const bool haveOn = fp_point_ahead(o->fp, pos, 0.0f, fp_lateral(o->fp, pos) - off, on);
+	if (kFpBend && haveOn && o->prof && o->fpCtx) {
+		FpCtx* bc = (FpCtx*)o->fpCtx;
+		const float fr = aispeed_friction(o->prof), br = aispeed_braking(o->prof);
+		float lim = 1e9f;
+		static const float kSpan[2] = { FP_BEND_SPAN_NEAR, FP_BEND_SPAN };
+		for (int w = 0; w < 2 && fr > 0.0f && br > 0.0f; w++) {
+			const float span = kSpan[w];
+			float p0[2], p1[2], p2[2];
+			for (float at = 0.0f; at <= FP_BEND_REACH; at += FP_BEND_STEP) {
+				const float s0 = at > span ? at - span : 0.0f;
+				if (!fpPathAt(on, (const float (*)[2])P, n, s0, p0) ||
+						!fpPathAt(on, (const float (*)[2])P, n, at, p1) ||
+						!fpPathAt(on, (const float (*)[2])P, n, at + span, p2)) break;
+				if (at <= 0.0f) continue;
+				const float vmax = ai_speed_for_curvature(fr, ai_curvature(p0, p1, p2), 100.0f);
+				const float v = sqrtf(vmax * vmax + 2.0f * br * at);
+				if (v < lim) lim = v;
+			}
+		}
+		bc->bendLimit = lim < 1e8f ? lim : 0.0f;
+		bc->bendAt = f->raceSec;
+	}
+	if (kFpChord) {
+		// Shortened: the path's own point there, as chordAhead's drivePoint.
+		// From the path's own point beside the car (as chordAhead's from the
+		// line's): measured from the car, one a metre off its path read the
+		// run back onto it as a bend and steered at the kink.
+		if (haveOn) {
+			const float a = fpChordAhead(on, (const float (*)[2])P, n, ahead);
+			if (a < ahead && fpPathAt(on, (const float (*)[2])P, n, a, out)) {
+				*lateral = off;
+				return true;
+			}
+		}
+	}
+	aimThrough(pos, (const float (*)[2])P, n, ahead,
+		f->raceSec < DT_BEND_SEC ? DT_BEND_START : DT_BEND, out);
+	*lateral = fp_drive_target_offset(o->fp, pos);
+	return true;
 }
 
 void opponent_update(OpponentField* f, const RaceRoute* route,
@@ -3398,8 +3990,23 @@ void opponent_update(OpponentField* f, const RaceRoute* route,
 			o->goalL = choiceL(f, o, o->lineDist);
 		}
 
+		const bool fpWas = o->fpOn;
+		fpStep(f, i, o);
+		if (o->unstuck && o->fp) fp_drive_target_clear(o->fp);
+		// PORT (TASKS.md #549): off FuturePoints, the port's drive target
+		// starts where the car is, as BuildDriveTarget's does -- it had gone
+		// on walking to the choice while the car drove retail's line, and a
+		// racer handed back 3 m off it swung across the road (4084F 220 m).
+		if (fpWas && !o->fpOn && !o->unstuck) {
+			float lo, hi;
+			o->curL = lineLat - forkShift(f, o, o->lineDist);
+			if (ownRoadSpan(f, o, o->lineDist, &lo, &hi))
+				o->curL = keepOnRoad(o->curL, lo, hi);
+		}
 		float pt[2];
 		float planLat = lineOffset(f, o, o->lineDist);
+		bool fpAimed = false;
+		float fpLat = 0.0f;
 		if (o->unstuck) {
 			// CalculatePointsToDrive: the drive target is the goal alone.
 			pt[0] = goal[0];
@@ -3407,11 +4014,16 @@ void opponent_update(OpponentField* f, const RaceRoute* route,
 		} else if (home && pullOver(f, route, o, aidriver_lookahead(&o->drv, &o->sim, o->sim.speed),
 				pt, &planLat)) {
 		} else {
-			// CalcSteerToPoint: the point on the line, that far ahead.
+			// CalcSteerToPoint: DriveTarget::InterpolatePoint that far ahead
+			// (retailAim); without the route points, the line that far ahead.
 			float ahead = aidriver_lookahead(&o->drv, &o->sim, o->sim.speed);
 			const float shortBy = shortOfStart(f, route, o);
-			ahead = chordAhead(f, route, o, ahead > shortBy ? ahead - shortBy : 0.0f);
-			if (!drivePoint(f, route, o, lineAhead(f, o, ahead), pt)) {
+			ahead = ahead > shortBy ? ahead - shortBy : 0.0f;
+			if (fpAim(f, o, ahead, pt, &fpLat)) {
+				fpAimed = true;
+			} else if (retailAim(f, route, o, ahead, pt)) {
+			} else if (ahead = chordAhead(f, route, o, ahead),
+					!drivePoint(f, route, o, lineAhead(f, o, ahead), pt)) {
 				// Past the end of a sprint, or a gap in the splines: aim
 				// straight on, which is SteerStraightVelocity3D's answer.
 				pt[0] = o->sim.pos[0] + o->sim.rot[0][0] * ahead;
@@ -3423,7 +4035,7 @@ void opponent_update(OpponentField* f, const RaceRoute* route,
 
 		// DriveTarget::GetLateralOffset: how far off its own line the car is,
 		// positive to the right of travel.
-		o->drv.lateral_m = lineLat - planLat;
+		o->drv.lateral_m = fpAimed ? fpLat : lineLat - planLat;
 
 		// SetDesiredSpeedAsRacer (0x8000B7D0): every switch interval the
 		// driver re-rolls where up the road it reads its speed limit from,
@@ -3449,6 +4061,27 @@ void opponent_update(OpponentField* f, const RaceRoute* route,
 		float at = lineAhead(f, o, ahead);
 		if (at < 0.0f) at = 0.0f;
 		float limit = o->prof ? aispeed_at(o->prof, at) : o->topSpeed;
+		// FuturePoints' own: GetDrivingLineSpeed that far up the line. PORT:
+		// no more than the profile's -- the route points' own speeds are 100
+		// m/s on most roads, and only a corner sign caps them, where the
+		// race's bends between its routes have none.
+		const float fpPos[2] = { o->sim.pos[0], o->sim.pos[1] };
+		const bool fpSpeed = kFpSpeed && o->fpOn;
+		if (fpSpeed) {
+			const float v = fp_speed_ahead(o->fp, fpPos, ahead);
+			if (v > 0.0f && v < limit) limit = v;
+		}
+		// PORT (TASKS.md #549): the walk's own bends. Retail slows only at a
+		// corner sign's points (fillSpeeds); a tight bend inside one route
+		// (4063B's r104 at 4,519 m) has none, so the line's speed there is the
+		// route byte, 100 m/s, and the profile's is the race line's wider arc.
+		// Plan it as the profile does: Curvature over +-15 m, braked back to
+		// the car.
+		if (kFpBend && o->fpOn && o->fpCtx) {
+			const FpCtx* bc = (const FpCtx*)o->fpCtx;
+			if (bc->bendLimit > 0.0f && f->raceSec - bc->bendAt < 0.25f && bc->bendLimit < limit)
+				limit = bc->bendLimit;
+		}
 		// PORT (TASKS.md #280): read behind the car, no more than the limit
 		// where it is. Retail keeps a racer's FuturePoints behind it
 		// (RaceCarController::KeepFuturePointsBehindMe), so it does read the
@@ -3460,7 +4093,11 @@ void opponent_update(OpponentField* f, const RaceRoute* route,
 		// line passes, and its follower stopped behind it. Reading ahead still
 		// crawls through the next bend as retail's does.
 		if (o->prof && ahead < 0.0f) {
-			const float here = aispeed_at(o->prof, o->lineDist > 0.0f ? o->lineDist : 0.0f);
+			float here = aispeed_at(o->prof, o->lineDist > 0.0f ? o->lineDist : 0.0f);
+			if (fpSpeed) {
+				const float v = fp_speed_ahead(o->fp, fpPos, 0.0f);
+				if (v > 0.0f && v < here) here = v;
+			}
 			if (limit > here) limit = here;
 		}
 		limit = forkLimit(f, o, o->prof, limit);
@@ -3656,8 +4293,22 @@ void opponent_free(OpponentField* f) {
 	f->forks = NULL;
 	ailine_free(f->line);
 	f->line = NULL;
+	free(f->dtDist);
+	f->dtDist = NULL;
+	f->dtCount = 0;
+	f->dtTried = false;
 	trackroute_close(f->routes);
 	f->routes = NULL;
+	free(f->fpHops);
+	f->fpHops = NULL;
+	free(f->fpOnRace);
+	f->fpOnRace = NULL;
+	for (int i = 0; i < OPPONENT_MAX; i++) {
+		fp_free(f->car[i].fp);
+		f->car[i].fp = NULL;
+		free(f->car[i].fpCtx);
+		f->car[i].fpCtx = NULL;
+	}
 	for (int i = 0; i < f->count; i++) {
 		if (f->car[i].ownsModel)
 			model3d_free(f->car[i].model);

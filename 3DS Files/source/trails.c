@@ -125,6 +125,10 @@ typedef struct {
 	GPU_DEPTHBUF depthFmt;
 	bool failed;
 	u16 width;                 // the eye target's, 240
+	u16 rows;                  // the eye target's: 400, or 800 wide (stereo.h)
+	u16 cap;                   // the rows the buffers hold
+	u16 failedRows;            // the rows no VRAM was found for
+	bool alias;                // eye 1 in eye 0's 800-row buffers' last 400 rows
 	u32 drawn;                 // the frame it was last drawn into
 } TrailEye;
 
@@ -214,9 +218,14 @@ static void freeMem(void* p, bool vram) {
 }
 
 static void freeEye(TrailEye* e) {
-	freeMem(e->buf, e->vram);
-	freeMem(e->depth, e->depthVram);
+	if (!e->alias) {
+		freeMem(e->buf, e->vram);
+		freeMem(e->depth, e->depthVram);
+	}
 	memset(e, 0, sizeof(*e));
+	// Eye 1 may be a view of eye 0's buffers (makeEye()).
+	if (e == &s.eye[0] && s.eye[1].alias)
+		memset(&s.eye[1], 0, sizeof(s.eye[1]));
 }
 
 // The largest block one bank would give now (16 KB steps), for the log.
@@ -246,17 +255,73 @@ static u32 largestBlock(vramAllocPos bank) {
 // one out -- a colour buffer and a depth buffer of its own, in opposite VRAM
 // banks where they fit -- so this one now is too, and trails_begin() copies
 // the eye's depth into it (a TextureCopy, as smear_capture() copies colour).
-static bool makeEye(int i, u16 width, GPU_DEPTHBUF depthFmt) {
+//
+// PORT, the 800-wide top screen (stereo.h): the eye target is then 800 rows
+// tall and so is the buffer. Buffers made for 800 rows (trails_world_buffer()
+// with Resolution Auto) serve 400 as they are, as the top target's do; a
+// switch either way starts the trails afresh. Where 800 rows find no VRAM the
+// 400-row buffers stay, and the wide frames go without trails.
+static void eyeRows(TrailEye* e, u16 rows) {
+	if (e->rows == rows)
+		return;
+	e->rows = rows;
+	C3D_FrameBufAttrib(&e->target.frameBuf, e->width, rows, false);
+	e->drawn = 0;
+	if (e == &s.eye[0])
+		s.eye[1].drawn = 0;   // a wide frame drew over the view eye 1 may be
+}
+
+// The stereo pair with eye 0's buffers made for 800 rows: eye 1 is their last
+// 400 (colour and depth), as the top target packs its right eye (stereo.c).
+// The hardware has no stereo in the 800-wide mode, so the two never draw in
+// the same frame at 800, and in a stereo frame eye 0 takes only its first 400.
+static bool aliasEye(u16 width, u16 rows, GPU_DEPTHBUF depthFmt) {
+	const TrailEye* l = &s.eye[0];
+	TrailEye* e = &s.eye[1];
+	if (rows > PANEL_H || !l->buf || l->cap < 2 * PANEL_H || l->width != width ||
+			l->depthFmt != depthFmt) {
+		if (e->alias)
+			memset(e, 0, sizeof(*e));
+		return false;
+	}
+	if (e->alias)
+		return true;
+	freeEye(e);
+	e->alias = true;
+	e->width = width;
+	e->depthFmt = depthFmt;
+	e->cap = e->rows = PANEL_H;
+	e->buf = (u8*)l->buf + (u32)width * PANEL_H * 4;
+	e->depth = (u8*)l->depth + C3D_CalcDepthBufSize(width, PANEL_H, depthFmt);
+	e->vram = e->depthVram = true;
+	C3D_FrameBufAttrib(&e->target.frameBuf, width, PANEL_H, false);
+	C3D_FrameBufColor(&e->target.frameBuf, e->buf, GPU_RB_RGBA8);
+	C3D_FrameBufDepth(&e->target.frameBuf, e->depth, depthFmt);
+	say("trails: eye 1's buffer is the last 400 rows of eye 0's 800, no VRAM of its own");
+	return true;
+}
+
+static bool makeEye(int i, u16 width, u16 rows, GPU_DEPTHBUF depthFmt) {
+	if (i == 1 && aliasEye(width, rows, depthFmt))
+		return true;
 	TrailEye* e = &s.eye[i];
 	if (e->width != width || (e->buf && e->depthFmt != depthFmt))
 		freeEye(e);
 	e->width = width;
-	if (e->buf)
+	if (e->buf && e->cap >= rows) {
+		eyeRows(e, rows);
 		return true;
-	if (e->failed)
+	}
+	if (e->failed || e->failedRows == rows)
 		return false;
-	const u32 bytes = (u32)width * PANEL_H * 4;
-	const u32 dbytes = C3D_CalcDepthBufSize(width, PANEL_H, depthFmt);
+	// Larger: the new pair first, the old kept should it not fit.
+	TrailEye old = *e;
+	if (old.buf) {
+		e->buf = e->depth = NULL;
+		e->vram = e->depthVram = false;
+	}
+	const u32 bytes = (u32)width * rows * 4;
+	const u32 dbytes = C3D_CalcDepthBufSize(width, rows, depthFmt);
 	// VRAM only, as citro3d's targets: no target with its buffers in linear
 	// memory has been drawn on on hardware, so none is risked here.
 	// Every placement of the pair, opposite banks first (citro3d's
@@ -280,44 +345,60 @@ static bool makeEye(int i, u16 width, GPU_DEPTHBUF depthFmt) {
 	e->depthVram = e->depth != NULL;
 	char b[200];
 	if (!e->buf || !e->depth) {
-		freeEye(e);
-		e->failed = true;
-		e->width = width;   // not tried again until the width changes
-		snprintf(b, sizeof(b), "trails: no VRAM for eye %d's %ux400 buffer (%u + %u KB, %lu KB "
+		freeMem(e->buf, e->vram);
+		freeMem(e->depth, e->depthVram);
+		if (old.buf) {
+			*e = old;               // the smaller pair stays for the 400-row frames
+			e->failedRows = rows;
+		} else {
+			memset(e, 0, sizeof(*e));
+			e->failed = true;
+			e->width = width;   // not tried again until the width changes
+		}
+		snprintf(b, sizeof(b), "trails: no VRAM for eye %d's %ux%u buffer (%u + %u KB, %lu KB "
 			"left, largest A %lu KB B %lu KB) -- no light trails there", i, (unsigned)width,
+			(unsigned)rows,
 			(unsigned)(bytes >> 10), (unsigned)(dbytes >> 10),
 			(unsigned long)(vramSpaceFree() >> 10), (unsigned long)(largestBlock(VRAM_ALLOC_A) >> 10),
 			(unsigned long)(largestBlock(VRAM_ALLOC_B) >> 10));
 		say(b);
 		return false;
 	}
+	freeMem(old.buf, old.vram);
+	freeMem(old.depth, old.depthVram);
 	e->depthFmt = depthFmt;
 	e->width = width;
+	e->cap = rows;
+	e->failedRows = 0;
 	memset(&e->target, 0, sizeof(e->target));
-	C3D_FrameBufAttrib(&e->target.frameBuf, width, PANEL_H, false);
+	C3D_FrameBufAttrib(&e->target.frameBuf, width, rows, false);
 	C3D_FrameBufColor(&e->target.frameBuf, e->buf, GPU_RB_RGBA8);
 	C3D_FrameBufDepth(&e->target.frameBuf, e->depth, depthFmt);
+	e->rows = rows;
 	e->drawn = 0;
-	snprintf(b, sizeof(b), "trails: eye %d's %ux400 light trail buffer, colour %u KB %s, its own "
-		"depth %u KB %s (%lu KB VRAM left)", i, (unsigned)width, (unsigned)(bytes >> 10),
+	snprintf(b, sizeof(b), "trails: eye %d's %ux%u light trail buffer, colour %u KB %s, its own "
+		"depth %u KB %s (%lu KB VRAM left)", i, (unsigned)width, (unsigned)rows,
+		(unsigned)(bytes >> 10),
 		e->vram ? "VRAM" : "linear", (unsigned)(dbytes >> 10), e->depthVram ? "VRAM" : "linear",
 		(unsigned long)(vramSpaceFree() >> 10));
 	say(b);
 	return true;
 }
 
-void trails_world_buffer(bool want, u16 width, GPU_DEPTHBUF depthFmt) {
+void trails_world_buffer(bool want, u16 width, u16 rows, GPU_DEPTHBUF depthFmt) {
 	if (!want)
 		return;
 	s.eye[0].failed = false;
-	makeEye(0, width, depthFmt);
+	s.eye[0].failedRows = 0;
+	if (!makeEye(0, width, rows, depthFmt) && rows > PANEL_H)
+		makeEye(0, width, PANEL_H, depthFmt);
 }
 
 // The eye's depth so far into the buffer's own, a tile row at a time
 // (smear.c's capture()), queued after the commands so far.
 static void copyDepth(const C3D_RenderTarget* eyeTarget, TrailEye* e) {
-	const u32 dbytes = C3D_CalcDepthBufSize(e->width, PANEL_H, e->depthFmt);
-	const u32 line = dbytes / (PANEL_H / 8);
+	const u32 dbytes = C3D_CalcDepthBufSize(e->width, e->rows, e->depthFmt);
+	const u32 line = dbytes / (e->rows / 8u);
 	// #481: the copy submits the draws so far itself, unflushed; on the 3DS
 	// a running queue then reads the list before the cache has written it.
 	C3D_FrameSplit(GX_CMDLIST_FLUSH);
@@ -337,7 +418,7 @@ static void bindQuad(void) {
 	BufInfo_Init(bi);
 	BufInfo_Add(bi, s.quad, sizeof(TrailVert), 2, 0x10);
 	// The screen's place in the capture: its 240 columns of 256 and its 400
-	// rows of 512 at the top (smear.c's map).
+	// rows of 512 at the top (smear.c's map; wide, 800 of 1024, the same).
 	C3D_FVUnifSet(GPU_VERTEX_SHADER, s.uMap0, (float)PANEL_W / TEX_W, (float)PANEL_H / TEX_H,
 		0.0f, 1.0f - (float)PANEL_H / TEX_H);
 	C3D_CullFace(GPU_CULL_NONE);
@@ -361,7 +442,8 @@ bool trails_begin(C3D_RenderTarget* eyeTarget, int eye) {
 	// The composite needs the smear's capture; without it the flares stay
 	// on the screen.
 	if (!init() || !smear_texture() ||
-			!makeEye(eye, eyeTarget->frameBuf.width, eyeTarget->frameBuf.depthFmt))
+			!makeEye(eye, eyeTarget->frameBuf.width, eyeTarget->frameBuf.height,
+				eyeTarget->frameBuf.depthFmt))
 		return false;
 	TrailEye* e = &s.eye[eye];
 	copyDepth(eyeTarget, e);
@@ -595,7 +677,7 @@ bool trails_post(C3D_RenderTarget* eyeTarget, int eye) {
 	if (!s.post || eye < 0 || eye >= TRAIL_EYES || !eyeTarget)
 		return false;
 	TrailEye* e = &s.eye[eye];
-	if (!e->buf || e->drawn != s.frame)
+	if (!e->buf || e->drawn != s.frame || e->rows != eyeTarget->frameBuf.height)
 		return false;
 	if (makeGlow()) {
 		const C3D_Tex* scene = smear_capture(eyeTarget, false);

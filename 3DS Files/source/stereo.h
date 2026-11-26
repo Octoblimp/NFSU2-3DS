@@ -43,6 +43,17 @@
 // and the shader the overlay is laid on with. Made once, outside a frame,
 // and kept. False, logged, without the VRAM, linear memory or the shader:
 // the top screen then stays flat.
+// The top screen's target, with buffers sized for the 800-wide mode as well
+// (stereo.c's head): its colour 240x800, its depth 240x800 with the 2D's
+// overlay after the first 400 rows. A plain 240x400 target, and no wide
+// mode, when the VRAM is not there. Before stereo_init(), which pairs with it.
+C3D_RenderTarget* stereo_top_create(u32 transferFlags);
+
+// This frame's top screen is 800x240 (Display > Resolution > Auto with no
+// 3-D showing): the top target is 800 rows tall, its 2D still the 400x240
+// it always is. Set by stereo_frame_start(), before the frame's clears.
+bool stereo_wide(void);
+
 bool stereo_init(void (*log)(const char*), C3D_RenderTarget* left, u32 transferFlags);
 
 // Right after the frame's clears: nothing of last frame's stereo carries over.

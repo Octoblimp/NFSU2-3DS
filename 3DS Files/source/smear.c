@@ -60,6 +60,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "display.h"
 #include "fe_post.h"
 #include "model3d.h"
 #include "shaders.h"
@@ -103,6 +104,8 @@ static struct {
 	C3D_Tex tex;
 	void* own;              // our buffer, when fe_post has none
 	bool ownVram;           // own is smear_world_buffer()'s VRAM
+	void* wide;             // the 800-row capture, 256x1024 in linear memory
+	bool wideTried;
 	SmearVert* ring;
 	int ringFrame, ringUsed;
 
@@ -148,9 +151,33 @@ static bool init(void) {
 
 // The capture's texture: the frontend's scene buffer (at least 256x512
 // RGBA8), or one of our own in linear memory without it.
-static bool bindBuffer(void) {
-	C3D_RenderTarget* fe = fepost_target();
-	void* data = fe ? fe->frameBuf.colorBuf : NULL;
+//
+// PORT, the 800-wide top screen (stereo.h): its 800 rows go into a 256x1024
+// texture of their own, in linear memory, so the world's textures keep the
+// VRAM (the GPU samples linear memory as it does VRAM). 800 of 1024 is 400 of
+// 512, so every map of the capture (this file's, bleach.c's, trails.c's,
+// rain.c's lens) holds for both. With Resolution Auto the world's 400-row
+// frames (the 3-D up) use it too, its first 512 rows, and smear_world_buffer()
+// takes no VRAM: Light Trails' 800-row buffers have taken that already.
+static bool bindBuffer(u16 rows) {
+	void* data = NULL;
+	u16 texH = TEX_H;
+	const bool autoRes = g_display.b.racingRes == DISPLAY_RES_AUTO;
+	if (rows > TEX_H || (autoRes && !s.own && !fepost_target())) {
+		if (!s.wide && !s.wideTried) {
+			s.wideTried = true;
+			s.wide = linearAlloc(TEX_W * 2 * TEX_H * 4);
+			say(s.wide ? "smear: the 800-row capture, 256x1024 in 1 MB of linear memory"
+				: "smear: no linear memory for the 800-row capture -- no screen copies there");
+		}
+		data = s.wide;
+		texH = rows > TEX_H ? 2 * TEX_H : TEX_H;
+		if (!data)
+			return false;
+	}
+	C3D_RenderTarget* fe = data ? NULL : fepost_target();
+	if (!data)
+		data = fe ? fe->frameBuf.colorBuf : NULL;
 	if (!data) {
 		if (!s.own) {
 			s.own = linearAlloc(TEX_W * TEX_H * 4);
@@ -163,13 +190,13 @@ static bool bindBuffer(void) {
 	}
 	if (!data)
 		return false;
-	if (s.tex.data != data) {
+	if (s.tex.data != data || s.tex.height != texH) {
 		memset(&s.tex, 0, sizeof(s.tex));
 		s.tex.data = data;
 		s.tex.fmt = GPU_RGBA8;
-		s.tex.size = TEX_W * TEX_H * 4;
+		s.tex.size = (u32)TEX_W * texH * 4;
 		s.tex.width = TEX_W;
-		s.tex.height = TEX_H;
+		s.tex.height = texH;
 		s.tex.param = GPU_TEXTURE_MODE(GPU_TEX_2D);
 		C3D_TexSetFilter(&s.tex, GPU_LINEAR, GPU_LINEAR);
 		C3D_TexSetWrap(&s.tex, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
@@ -276,23 +303,24 @@ static C3D_TexEnv* stage(int id, GPU_COMBINEFUNC func, GPU_TEVSRC a, GPU_TEVSRC 
 	return env;
 }
 
-// The capture: the eye's 240x400 colour buffer, a tile row (8 lines of 240
-// RGBA8 pixels, 7680 bytes) at a time, into the texture's rows of 256 (8192),
-// queued after the commands so far; `target` bound again after it.
+// The capture: the eye's 240x400 colour buffer (240x800 wide), a tile row (8
+// lines of 240 RGBA8 pixels, 7680 bytes) at a time, into the texture's rows of
+// 256 (8192), queued after the commands so far; `target` bound again after it.
 static void capture(C3D_RenderTarget* target) {
+	const u32 rows = target->frameBuf.height;
 	const u32 line = PANEL_W * 8 * 4;
 	const u32 gap = (TEX_W - PANEL_W) * 8 * 4;
 	// #481: the copy submits the draws so far itself, unflushed; on the 3DS
 	// a running queue then reads the list before the cache has written it.
 	C3D_FrameSplit(GX_CMDLIST_FLUSH);
 	C3D_SyncTextureCopy((u32*)target->frameBuf.colorBuf, GX_BUFFER_DIM(line >> 4, 0),
-		(u32*)s.tex.data, GX_BUFFER_DIM(line >> 4, gap >> 4), line * (PANEL_H / 8),
+		(u32*)s.tex.data, GX_BUFFER_DIM(line >> 4, gap >> 4), line * (rows / 8),
 		GX_TRANSFER_RAW_COPY(1));
 	C3D_FrameDrawOn(target);
 }
 
 const C3D_Tex* smear_capture(C3D_RenderTarget* target, bool copied) {
-	if (!target || !bindBuffer())
+	if (!target || !bindBuffer(target->frameBuf.height))
 		return NULL;
 	if (!copied)
 		capture(target);
@@ -300,11 +328,11 @@ const C3D_Tex* smear_capture(C3D_RenderTarget* target, bool copied) {
 }
 
 const C3D_Tex* smear_texture(void) {
-	return bindBuffer() ? &s.tex : NULL;
+	return bindBuffer(PANEL_H) ? &s.tex : NULL;
 }
 
 bool smear_draw(C3D_RenderTarget* target) {
-	if (s.speedK < 1.0f / 255.0f || !target || !init() || !bindBuffer())
+	if (s.speedK < 1.0f / 255.0f || !target || !init() || !bindBuffer(target->frameBuf.height))
 		return false;
 	if (s.ringUsed + N_SMEARS * 4 > RING_VERTS)
 		return false;
@@ -371,7 +399,8 @@ bool smear_draw(C3D_RenderTarget* target) {
 	BufInfo_Init(bi);
 	BufInfo_Add(bi, s.ring + s.ringFrame * RING_VERTS, sizeof(SmearVert), 2, 0x10);
 	// The screen's place in the texture: its 240 columns of 256 and its 400
-	// rows of 512 at the top (t = 1 is the buffer's first row).
+	// rows of 512 at the top (t = 1 is the buffer's first row); wide, its 800
+	// of 1024, the same share.
 	C3D_FVUnifSet(GPU_VERTEX_SHADER, s.uMap0, (float)PANEL_W / TEX_W, (float)PANEL_H / TEX_H,
 		0.0f, 1.0f - (float)PANEL_H / TEX_H);
 	C3D_CullFace(GPU_CULL_NONE);
@@ -410,7 +439,7 @@ bool smear_draw(C3D_RenderTarget* target) {
 
 void smear_world_buffer(bool on) {
 	if (on) {
-		if (s.own || fepost_target())
+		if (s.own || fepost_target() || g_display.b.racingRes == DISPLAY_RES_AUTO)
 			return;
 		s.own = vramAlloc(TEX_W * TEX_H * 4);
 		s.ownVram = s.own != NULL;
