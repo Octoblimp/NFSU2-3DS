@@ -93,6 +93,7 @@ struct RaceRoute {
 	u8* blocked;
 	int nBlocked;
 	int nClosed; // how many of them this track's barriers close
+	float (*gates)[4]; // the closed gates' two ends, x0 y0 x1 y1 (TASKS.md #549)
 
 	int trackId;
 	int wpCount;
@@ -1053,6 +1054,15 @@ RaceRoute* race_route_open(const char* path, int trackId, bool reverse,
 			closed += r->blocked[i];
 		}
 		r->nClosed = closed;
+		r->gates = (float(*)[4])malloc(sizeof(float[4]) * (size_t)(closed > 0 ? closed : 1));
+		for (int i = 0, k = 0; r->gates && i < r->nBlocked; i++) {
+			if (!r->blocked[i])
+				continue;
+			const u8* g = blocks + i * RP_BLOCK_BYTES;
+			for (int j = 0; j < 4; j++)
+				r->gates[k][j] = rdf(g + j * 4);
+			k++;
+		}
 	}
 	// GetGroupByTrack.
 	{
@@ -1120,6 +1130,7 @@ void race_route_close(RaceRoute* r) {
 	free(r->paths);
 	free(r->pts);
 	free(r->blocked);
+	free(r->gates);
 	free(r);
 }
 
@@ -1354,6 +1365,29 @@ bool race_route_sample(const RaceRoute* r, float dist, float lateral,
 
 float race_route_length(const RaceRoute* r) { return r ? r->total : 0.0f; }
 bool race_route_loops(const RaceRoute* r) { return r && r->loop; }
+
+float race_route_relevant(const RaceRoute* r) { return r ? r->f20 : 0.0f; }
+
+int race_route_closed_gates(const RaceRoute* r, const float (**out)[4]) {
+	if (!r || !r->gates) {
+		*out = NULL;
+		return 0;
+	}
+	*out = (const float(*)[4])r->gates;
+	return r->nClosed;
+}
+
+bool race_route_paths_box(const RaceRoute* r, float mn[2], float mx[2]) {
+	if (!r || r->nPaths <= 0)
+		return false;
+	for (int i = 0; i < r->nPaths; i++)
+		for (int k = 0; k < 2; k++) {
+			const float a = r->paths[i].bbMin[k], b = r->paths[i].bbMax[k];
+			if (i == 0 || a < mn[k]) mn[k] = a;
+			if (i == 0 || b > mx[k]) mx[k] = b;
+		}
+	return true;
+}
 int race_route_path_count(const RaceRoute* r) { return r ? r->groups[0].count : 0; }
 int race_route_branch_count(const RaceRoute* r) { return r ? r->groupCount - 1 : 0; }
 

@@ -89,6 +89,14 @@ RaceRoute* race_route_open(const char* path, int trackId, bool reverse,
 void  race_route_close(RaceRoute* r);
 float race_route_length(const RaceRoute* r);
 bool  race_route_loops(const RaceRoute* r);
+// TrackPathManager +0x20 (0x803F4488), the route group's byte +5: how far a
+// TrackRoute may be from the path and count (GetRelevantDistance 0x801F5870).
+float race_route_relevant(const RaceRoute* r);
+// The gates EnableBarriers closed for the track, each {x0, y0, x1, y1}
+// (TASKS.md #549, CrossesBarrier 0x801F598C). Returns the count.
+int   race_route_closed_gates(const RaceRoute* r, const float (**out)[4]);
+// Every path's box together (TheTrackPathManager's paths, +0x98 / +0xA0).
+bool  race_route_paths_box(const RaceRoute* r, float mn[2], float mx[2]);
 int   race_route_path_count(const RaceRoute* r);
 int   race_route_branch_count(const RaceRoute* r);
 

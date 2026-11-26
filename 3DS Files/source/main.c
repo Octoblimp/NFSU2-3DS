@@ -22,6 +22,7 @@
 #include "helvetica_bcfnt.h"
 #include "profile_save.h"
 #include "race.h"
+#include "racepass.h"
 #include "audio.h"
 #include "eatrax.h"
 #include "speech.h"
@@ -43600,6 +43601,19 @@ static bool raceStartTrack(int i) {
 			dlog("race: DbgNoAiLine -- the field drives the race route");
 		} else if (buildGamePath(cfg, rel, path, sizeof(path))) {
 			TrackRouteSet* trs = trackroute_open(path, dlog);
+			// InitTrackRoutes' race pass (racepass.h, TASKS.md #549): retail
+			// rewrites the file's sign types for the race it loads, which is what
+			// keeps its racers on the race. The racers' FuturePoints walk them.
+			if (trs) {
+				RacePassStats ps;
+				const u64 tp = osGetTime();
+				if (racepass_run(trs, route, track, &ps)) {
+					snprintf(b, sizeof(b), "race: route pass %llu ms, %d routes on the race, "
+						"%d sign types changed, %d signs dropped",
+						(unsigned long long)(osGetTime() - tp), ps.relevant, ps.changes, ps.gone);
+					dlog(b);
+				}
+			}
 			const AiLineWalls walls = { aiLineWallsThunk, NULL, aiLineGroundThunk };
 			// Where the player and the field start, so the line starts on
 			// the grid's own road (TASKS.md #280).

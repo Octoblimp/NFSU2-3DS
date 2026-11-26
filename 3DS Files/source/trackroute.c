@@ -76,6 +76,9 @@ static void walkRoutes(const u8* buf, long size, TRPoint* out, TRRoute* outRoute
 					q->speedB = p[0x2D];
 					q->slope = (float)(s8)p[0x21] * (1.0f / 128.0f);
 					q->tInt = (u8)((bits >> 19) & 0x3F);
+					q->bits = bits;
+					q->fpPostF = q->postF;
+					q->fpPostB = q->postB;
 				}
 				if (out && outRoutes) {
 					TRRoute* rt = &outRoutes[nr];
@@ -89,6 +92,12 @@ static void walkRoutes(const u8* buf, long size, TRPoint* out, TRRoute* outRoute
 					memcpy(rt->line, buf + r + 0x82, sizeof(rt->line));
 					rt->num = n > 0 ? (int)(rd32(buf + r + TR_ROUTE_HDR + 0x0C) & 0x7FFu) : -1;
 					rt->rbits = rt->bits;
+					rt->type = (int)rd32(buf + r + 0x0C);
+					for (int l = 0; l < 4; l++) {
+						rt->excl[l] = rd16(buf + r + 0x44 + l * 2);
+						rt->incl[l] = rd16(buf + r + 0x4C + l * 2);
+					}
+					rt->named = buf[r + 0x58] != 0;
 					for (int l = 0; l < 2; l++) {
 						rt->lineHas[l][0] = buf[r + 0x74 + l * 8];
 						rt->lineHas[l][1] = buf[r + 0x75 + l * 8];
@@ -124,6 +133,8 @@ static int walkSigns(const u8* buf, long size, TRSign* out) {
 				g->newRn = (s16)rd16(p + 0x08);
 				g->oldRn = (s16)rd16(p + 0x0A);
 				g->bits = rd32(p + 0x0C);
+				g->fpType = (u8)(g->bits & 15u);
+				g->fpGone = false;
 			}
 		}
 		off += 8 + (long)csz;

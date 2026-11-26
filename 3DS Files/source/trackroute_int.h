@@ -27,6 +27,11 @@ typedef struct {
 	float slope;          // +0x21 s8 / 128: rise a metre to the next point
 	u8 tInt;              // bits 19-24 of +0x0C, the traffic intersection
 	                      // number, 0x3F for none (FarEnoughFromPrevPoint)
+	u32 bits;             // +0x0C whole
+	// The racers' posting after InitTrackRoutes' race pass (racepass.c); the
+	// file's postF / postB until it runs. Only FuturePoints reads these: the
+	// port's own line keeps the file's.
+	u8 fpPostF, fpPostB;
 } TRPoint;
 
 // A route's header, as much of it as trackroute_nearest reads.
@@ -40,6 +45,11 @@ typedef struct {
 	                            // (DecideSignpostAsRacer 0x8000A914)
 	u8 lineHas[2][2];           // +0x74 + line * 8 and +0x75: FillUpArray's
 	                            // ReduceFixup asks either for racing line 0 / 1
+	// What InitTrackRoutes' race pass reads (racepass.c, TASKS.md #549):
+	int type;                   // +0x0C; DetermineRelevanceOfRoutesToTrackPath
+	                            // leaves type 1 to the paths' box test
+	u16 excl[4], incl[4];       // +0x44 / +0x4C, IsExcludedOnTrack / IsIncludedOnTrack
+	bool named;                 // +0x58 holds a TrackPath name
 } TRRoute;
 
 // A Signpost (chunk 0x34122: a u32, then 0x20 bytes each), what a car reads
@@ -51,6 +61,11 @@ typedef struct {
 typedef struct {
 	s16 newPt, oldPt, newRn, oldRn;
 	u32 bits;
+	// The racers' sign type after the race pass (racepass.c), the file's
+	// bits 0-3 until it runs, and whether the pass dropped the sign. Only
+	// FuturePoints reads these.
+	u8 fpType;
+	bool fpGone;
 } TRSign;
 
 struct TrackRouteSet {

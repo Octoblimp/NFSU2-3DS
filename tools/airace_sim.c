@@ -24,6 +24,7 @@
 #include "futurepoints.h"
 #include "opponent.h"
 #include "race.h"
+#include "racepass.h"
 #include "topology.h"
 #include "trackdb.h"
 #include "trackroute.h"
@@ -145,6 +146,7 @@ typedef struct {
 	bool  open[I_COUNT];     // reported, and not over yet
 	int   count[I_COUNT];
 	float wallSec, offSec, stallSec;
+	float fpSec, fpWallSec; // on FuturePoints, and against a wall on it
 	// time spent touching another car of the field, and how many touches
 	float carSec;
 	int   carHits;
@@ -306,6 +308,18 @@ int main(int argc, char** argv)
 	snprintf(path, sizeof(path), "%s/TRACKS/ROUTESL4RA/Routes%d%s.bin", pc, track,
 		reverse ? "B" : "F");
 	TrackRouteSet* trs = trackroute_open(path, lg);
+	// As main.c: retail's InitTrackRoutes race pass on the racers' routes
+	// (racepass.h). AIRACE_NOPASS=1 drives the file's own signs (bisecting).
+	if (trs && !getenv("AIRACE_NOPASS")) {
+		RacePassStats ps;
+		if (racepass_run(trs, route, track, &ps))
+			printf("  racepass %d%s: %d routes relevant, %d signs gone, %d changes in %d passes, "
+				"racer signs 0:%d 1:%d 2:%d 3:%d 4:%d 7:%d 8:%d 10:%d, posted vs file: "
+				"racers %d players %d points\n", track, reverse ? "B" : "F", ps.relevant, ps.gone, ps.changes, ps.passes,
+				ps.racerSigns[0], ps.racerSigns[1], ps.racerSigns[2], ps.racerSigns[3],
+				ps.racerSigns[4], ps.racerSigns[7], ps.racerSigns[8], ps.racerSigns[10],
+				ps.diffRacer, ps.diffPlayer);
+	}
 	const AiLineWalls walls = { lineWallsThunk, NULL, lineGroundThunk };
 	float gridXY[2 * (OPPONENT_MAX + 1)];
 	int nGrid = 0;
@@ -661,6 +675,7 @@ int main(int argc, char** argv)
 					fprintf(trace, "F,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f\n", o->name, sec, a0[0], a0[1], a1[0], a1[1], fp_speed_ahead(o->fp, p2, 0.0f));
 			}
 			if (wall) m->wallSec += dt;
+			if (o->fpOn) { m->fpSec += dt; if (wall) m->fpWallSec += dt; }
 			if (touching[k]) {
 				m->carSec += dt;
 				if (!m->prevCar) {
@@ -713,13 +728,13 @@ int main(int argc, char** argv)
 		const float avg = m->samples ? m->sumSpeed / (float)m->samples : 0.0f;
 		printf("RESULT %d%s %-10s %-8s %s %7.1f s avg %5.1f top %5.1f prog %6.0f/%-6.0f "
 			"wall %5.1f s off %5.1f s (worst %4.1f) stall %5.1f s | wall %d off %d stall %d "
-			"wrong %d air %d reset %d unstuck %d hop %d cars %.1f s %d mellow %.0f s %d launch %.1f s\n",
+			"wrong %d air %d reset %d unstuck %d hop %d cars %.1f s %d mellow %.0f s %d launch %.1f s fp %.0f s fpwall %.1f s\n",
 			track, reverse ? "B" : "F", o->name, o->carDir,
 			m->finished ? "FIN" : "DNF", m->finished ? m->finishSec : sec, avg,
 			m->maxSpeed, m->progress, goal, m->wallSec, m->offSec, m->worstOff,
 			m->stallSec, m->count[I_WALL], m->count[I_OFFLINE], m->count[I_STALL],
 			m->count[I_WRONG], m->count[I_AIR], m->count[I_RESET], m->count[I_UNSTUCK],
-			m->count[I_HOP], m->carSec, m->carHits, m->mellowSec, m->moverSwaps, m->launchSec);
+			m->count[I_HOP], m->carSec, m->carHits, m->mellowSec, m->moverSwaps, m->launchSec, m->fpSec, m->fpWallSec);
 		if (!m->finished || m->count[I_RESET] || m->count[I_STALL] || m->count[I_WRONG])
 			bad++;
 	}

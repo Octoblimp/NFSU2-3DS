@@ -251,7 +251,7 @@ bool fp_seed(FuturePoints* f, const float pos[3], const float heading[2], int pr
 			if (fabsf(dz) > 6.0f) continue;
 			for (int w = 0; w < 2; w++) {
 				const bool fwd = w == 0;
-				if (!(fwd ? q->postF : q->postB)) continue;
+				if (!(fwd ? q->fpPostF : q->fpPostB)) continue;
 				if (fwd && j + 1 >= rt->count) continue;
 				if (!fwd && j < 1) continue;
 				float d[2];
@@ -289,7 +289,7 @@ bool fp_seed(FuturePoints* f, const float pos[3], const float heading[2], int pr
 static bool signDecision(FuturePoints* f, int si) {
 	if (f->decided && f->decided[si]) return f->decided[si] == 2;
 	const TRSign* g = &f->s->signs[si];
-	const u32 type = g->bits & 15u;
+	const u32 type = g->fpType;
 	bool take = false;
 	if (type == 3u) take = false;
 	else if (type == 2u) take = true;
@@ -337,7 +337,9 @@ static bool advance(FuturePoints* f, int* route, int* point, bool* fwd, int* sig
 		const int si = q->sign[k];
 		if (si == 0xFFFF || si >= s->nSigns) continue;
 		const TRSign* g = &s->signs[si];
-		const u32 type = g->bits & 15u;
+		// InitTrackRoutes' race pass sorted it past the end (racepass.c).
+		if (g->fpGone) continue;
+		const u32 type = g->fpType;
 		const bool side = (g->bits >> 18) & 1u;
 		const bool corner = (g->bits >> 26) & 1u;
 		if (side == *fwd) continue;
