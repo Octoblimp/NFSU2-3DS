@@ -237,7 +237,7 @@ def main():
             rc, text = results[key]
             lines = text.splitlines()
             if args.quiet:
-                lines = [l for l in lines if l.startswith(("RESULT", "FAIL", "RACE"))]
+                lines = [l for l in lines if l.startswith(("RESULT", "FAIL", "RACE", "WEAVE"))]
             print("\n".join(lines))
             if rc == 0:
                 clean += 1

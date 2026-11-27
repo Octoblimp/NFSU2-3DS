@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "texpack.h"
+#include "sms.h"
 
 // See engage.h for where every number below comes from.
 
@@ -70,6 +71,28 @@ static const u32 kEventTexHash[EG_EVENT_TYPE_COUNT] = {
 //   kind 5 -> 16  SHOP_ICON_INTERIORS     UC_CAR_SPECIALTY, CC_CAR_SPECIALTY
 #define EG_SHOP_KIND_COUNT 6
 static const u8 kShopIndicatorType[EG_SHOP_KIND_COUNT] = { 12, 15, 13, 14, 11, 16 };
+
+// SMSGetEnvelopeImageHashAndColour's art, indexed by SMSMessageCategories:
+// 0 the default arm's Engage_SMS_mail, 1..7 the categories'.
+#define EG_SMS_ART_COUNT 8
+static const u32 kSmsArtHash[EG_SMS_ART_COUNT] = {
+	0x4B9B8F5Au, // default  ENGAGE_SMS_MAIL
+	0x88C9990Au, // 1 ENGAGE_SMS_RACHEL_MESSAGE
+	0x8B2F36EEu, // 2 ENGAGE_SMS_OPPONENT_MESSAGE
+	0x470222FDu, // 3 ENGAGE_SMS_SPECIAL_EVENT_MESSAGE
+	0xA9DFE648u, // 4 ENGAGE_SMS_OUTRUN_MESSAGE
+	0x5D9B6555u, // 5 ENGAGE_SMS_SHOP_MESSAGE
+	0x756B5C1Bu, // 6 ENGAGE_SMS_TIPS_MESSAGE
+	0x55476A96u, // 7 ENGAGE_SMS_RACE_MESSAGE
+};
+
+// The envelope's "animation" script (HUD_SingleRace.fng guid 919770, script
+// 0x375D11BF): 800 ms, looping, its colour track's alpha base 510 with
+// deltas -255 at 0 and 220 ms, -510 at 240 and 520, -255 at 540 -- shown,
+// a 20 ms cut, gone, a 20 ms return, shown. UpdateSMS sets the track's base
+// colour to the category's before it starts it.
+static const float kSmsBlinkMs[6] = { 0.0f, 220.0f, 240.0f, 520.0f, 540.0f, 800.0f };
+static const float kSmsBlinkAlpha[6] = { 255.0f, 255.0f, 0.0f, 0.0f, 255.0f, 255.0f };
 
 // hud.c's HUD_SCALE: the 640x480 canvas at half size on a 400x240 screen.
 #define EG_SCALE 0.5f
@@ -177,7 +200,25 @@ struct Engage {
 	// when it last entered 2 (#274).
 	int phoneState;
 	u64 phoneMs;
+	// The SMS event's arrival (engage_set_sms_arrival): its slot's state,
+	// when it last entered 2, and the arriving message's category art.
+	int smsState;
+	int smsEnvelope;
+	u64 smsMs;
+	C3D_Tex smsTex[EG_SMS_ART_COUNT];
+	Tex3DS_SubTexture smsSub[EG_SMS_ART_COUNT];
+	C2D_Image smsImg[EG_SMS_ART_COUNT];
+	bool smsValid[EG_SMS_ART_COUNT];
 };
+
+void engage_set_sms_arrival(Engage* e, int slotState, int envelope) {
+	if (!e)
+		return;
+	if (slotState == 2 && e->smsState != 2)
+		e->smsMs = osGetTime();
+	e->smsState = slotState;
+	e->smsEnvelope = envelope;
+}
 
 void engage_set_stage0_phone(Engage* e, int slotState) {
 	if (!e)
@@ -282,9 +323,24 @@ Engage* engage_open(const char* freeRoamBunPath, const char* globalBunPath,
 			log(b);
 		}
 	}
+	// The arrival's category art: 1..7 from the same pack, the default arm's
+	// envelope reusing the one above.
+	int smsGot = 0;
+	for (int i = 1; i < EG_SMS_ART_COUNT; i++) {
+		const TexPackEntry* ent = texpack_find(&pack, kSmsArtHash[i]);
+		if (ent && texpack_decode_entry(ent, 0, false, &e->smsTex[i], &e->smsSub[i])) {
+			e->smsValid[i] = true;
+			e->smsImg[i].tex = &e->smsTex[i];
+			e->smsImg[i].subtex = &e->smsSub[i];
+			smsGot++;
+		}
+	}
 	texpack_release(&pack);
 
 	if (log) {
+		snprintf(b, sizeof(b), "engage: %d/%d SMS arrival envelopes", smsGot,
+			EG_SMS_ART_COUNT - 1);
+		log(b);
 		snprintf(b, sizeof(b), "engage: %d/%d textures (panel %s, rosette %s, "
 			"cingular %s, arrow %s, envelope %s, phone %s)",
 			got, EG_COUNT,
@@ -380,6 +436,11 @@ void engage_draw(Engage* e, bool smsWaiting, bool canEngage, int indicatorType) 
 		e->engaged = false;
 	}
 	const float ms = e->engaged ? fmodf((float)(nowMs - e->startMs), EG_LOOP_MS) : 0.0f;
+	// UpdateSMS's arrival: only with nothing to engage, which outranks it
+	// (Overide steps the SMS back to 4).
+	const bool smsArriving = smsWaiting && !canEngage &&
+		(e->smsState == 2 || e->smsState == 3);
+	const float smsMsIn = smsArriving ? fmodf((float)(nowMs - e->smsMs), EG_LOOP_MS) : 0.0f;
 
 	// The art carries its own colour -- Engage_Backing is black, the rosette is
 	// a dark ring with grey arrows -- and the engine's vertex colour multiplies
@@ -415,6 +476,14 @@ void engage_draw(Engage* e, bool smsWaiting, bool canEngage, int indicatorType) 
 		} else {
 			egDraw(e, EG_PHONE, kRect[EG_PHONE], C2D_Color32(207, 128, 48, 255), 0.0f);
 		}
+	} else if (smsArriving) {
+		// UpdateSMS states 2 and 3: the centre on "Pulse" -- the phone while
+		// the message arrives (2), DetermineEngageType's art after (3), which
+		// with nothing to engage is the Cingular icon.
+		const float s = egTrack(kPulseMs, kPulseSize, 4, smsMsIn);
+		const float rect[4] = { kRect[EG_CINGULAR][0], kRect[EG_CINGULAR][1], s, s };
+		egDraw(e, e->smsState == 2 ? EG_PHONE : EG_CINGULAR, rect,
+			C2D_Color32(207, 128, 48, (u8)egTrack(kPulseMs, kPulseAlpha, 4, smsMsIn)), 0.0f);
 	} else {
 		// Engage_Cingular_Icon otherwise -- EventIndicator::SetResetState
 		// (0x80111988) with nothing to show, UpdateSMS's steady state
@@ -424,17 +493,39 @@ void engage_draw(Engage* e, bool smsWaiting, bool canEngage, int indicatorType) 
 	}
 
 	if (smsWaiting) {
-		// UpdateSMS state 4: the envelope, and the right arrow lit between it
-		// and the rosette.
-		egDraw(e, EG_MAIL, kRect[EG_MAIL], EG_TINT_ORANGE, 0.0f);
+		if (smsArriving) {
+			// UpdateSMS states 2 and 3 (#552): the category's art in its
+			// colour, blinking on "animation".
+			const int env = e->smsEnvelope >= 1 && e->smsEnvelope < EG_SMS_ART_COUNT &&
+				e->smsValid[e->smsEnvelope] ? e->smsEnvelope : 0;
+			const u32 rgba = sms_envelope_color_of(env);
+			const u8 a = (u8)egTrack(kSmsBlinkMs, kSmsBlinkAlpha, 6, smsMsIn);
+			const u32 tint = C2D_Color32((u8)(rgba >> 24), (u8)(rgba >> 16), (u8)(rgba >> 8), a);
+			if (env && a) {
+				const C2D_Image keep = e->img[EG_MAIL];
+				e->img[EG_MAIL] = e->smsImg[env];
+				egDraw(e, EG_MAIL, kRect[EG_MAIL], tint, 0.0f);
+				e->img[EG_MAIL] = keep;
+			} else if (a) {
+				egDraw(e, EG_MAIL, kRect[EG_MAIL], tint, 0.0f);
+			}
+		} else {
+			// UpdateSMS state 4: the envelope, and the right arrow lit between
+			// it and the rosette.
+			egDraw(e, EG_MAIL, kRect[EG_MAIL], EG_TINT_ORANGE, 0.0f);
+		}
 		// guid 902460 carries the quaternion (0, 0, 0.7071, 0.7071) -- a
 		// quarter turn about +z, which on a y-down canvas points the arrow
 		// right. Its twin, guid 902463, is the same art unrotated, pointing up.
-		// PORT (#447): the arrow of the direction the SMS is bound to.
+		// PORT (#447): the arrow of the direction the SMS is bound to. While
+		// the message arrives it is on "pulse", the up arrow's sizes in
+		// orange; settled, "static", white.
 		if (s_smsDir >= 0 && s_smsDir <= 3) {
 			const float rect[4] = { kArrowAt[s_smsDir][0], kArrowAt[s_smsDir][1],
-				kRect[EG_HIGHLIGHT][2], kRect[EG_HIGHLIGHT][3] };
-			egDraw(e, EG_HIGHLIGHT, rect, EG_TINT_ARROW, (float)M_PI * 0.5f * (float)s_smsDir);
+				smsArriving ? egTrack(kKeyMs, kArrowW, 3, smsMsIn) : kRect[EG_HIGHLIGHT][2],
+				smsArriving ? egTrack(kKeyMs, kArrowH, 3, smsMsIn) : kRect[EG_HIGHLIGHT][3] };
+			egDraw(e, EG_HIGHLIGHT, rect, smsArriving ? EG_TINT_ORANGE : EG_TINT_ARROW,
+				(float)M_PI * 0.5f * (float)s_smsDir);
 		}
 	}
 

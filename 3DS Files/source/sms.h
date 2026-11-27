@@ -86,6 +86,15 @@ u32 sms_from_id(const EventDb* db, const ProfileSmsSlot* m);
 #define SMS_ENVELOPE_NEW_TEX  0x4B9B8F5Au
 u32 sms_envelope_color(const EventDb* db, const ProfileSmsSlot* m);
 
+// The SMSMessageCategories (1..7, 0 for the default arm) UpdateSMS's arrival
+// states (2 and 3, Speed.elf 0x80111014) take the envelope's art and colour
+// from: the newest queued message neither read nor deleted, searched down
+// to index 1 -- never 0, as retail's loop stops there -- else 0.
+int sms_arrival_envelope(const NfsProfile* p, const EventDb* db);
+
+// SMSGetEnvelopeImageHashAndColour's colour for a category, 0xRRGGBBAA.
+u32 sms_envelope_color_of(int envelope);
+
 // NotifyReadMessage (0x8012C588) and NotifyDeleteMessage (0x8012C610). Both
 // set their byte on the slot and leave the queue's order alone; the caller
 // writes the save back.

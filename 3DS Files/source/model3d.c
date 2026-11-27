@@ -3804,28 +3804,52 @@ static void drawEnv(const Model3D* m, const GlossRec* r, int n, bool blended) {
 int g_dbgNoGlossEnv = 0;
 bool g_sweepGlossEnvSplit = false;
 static u8 mortonIndex(u32 x, u32 y);
-static C3D_Tex s_geRamp;
+// #553: LA8, not RGBA8 -- the PICA hands an LA8 texel on as (L, L, L, A), the
+// same four bytes the RGBA8 ramp held (s in R, G and B, t in A), from half the
+// memory: every pixel of the pass reads half as much. g_geRampRgba8 (the
+// tour's "rampold" step) binds the RGBA8 ramp as before.
+volatile bool g_geRampRgba8 = false;
+static C3D_Tex s_geRamp, s_geRamp32;
 static int s_geRampState;   // 0 not built yet, 1 built, -1 failed
-static bool geRamp(void) {
-	if (s_geRampState)
-		return s_geRampState > 0;
-	s_geRampState = -1;
-	if (!C3D_TexInit(&s_geRamp, 256, 256, GPU_RGBA8))
+static int s_geRamp32State;
+static bool geRampBuild(C3D_Tex* t, bool rgba8) {
+	if (!C3D_TexInit(t, 256, 256, rgba8 ? GPU_RGBA8 : GPU_LA8))
 		return false;
-	u32* dst = (u32*)s_geRamp.data;
 	for (u32 y = 0; y < 256; y++) {
 		const u32 a = 255u - y;
 		const u32 rowAt = (y >> 3) * 32u * 64u;
-		for (u32 x = 0; x < 256; x++)
-			dst[rowAt + (x >> 3) * 64u + mortonIndex(x & 7, y & 7)] =
-				(x << 24) | (x << 16) | (x << 8) | a;
+		for (u32 x = 0; x < 256; x++) {
+			const u32 at = rowAt + (x >> 3) * 64u + mortonIndex(x & 7, y & 7);
+			if (rgba8)
+				((u32*)t->data)[at] = (x << 24) | (x << 16) | (x << 8) | a;
+			else
+				((u16*)t->data)[at] = (u16)((x << 8) | a);
+		}
 	}
-	C3D_TexFlush(&s_geRamp);
-	C3D_TexSetFilter(&s_geRamp, GPU_NEAREST, GPU_NEAREST);
-	C3D_TexSetWrap(&s_geRamp, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
-	s_geRampState = 1;
-	dbglog_line(NULL, "carge: gloss + reflection in one pass over the car's opaque batches (ramp 256x256, 256 KB)");
+	C3D_TexFlush(t);
+	C3D_TexSetFilter(t, GPU_NEAREST, GPU_NEAREST);
+	C3D_TexSetWrap(t, GPU_CLAMP_TO_EDGE, GPU_CLAMP_TO_EDGE);
 	return true;
+}
+static bool geRamp(void) {
+	if (g_geRampRgba8) {
+		if (!s_geRamp32State)
+			s_geRamp32State = geRampBuild(&s_geRamp32, true) ? 1 : -1;
+		if (s_geRamp32State > 0)
+			return true;
+	}
+	if (s_geRampState)
+		return s_geRampState > 0;
+	s_geRampState = -1;
+	if (!geRampBuild(&s_geRamp, false))
+		return false;
+	s_geRampState = 1;
+	dbglog_line(NULL, "carge: gloss + reflection in one pass over the car's opaque batches (ramp 256x256 LA8, 128 KB)");
+	return true;
+}
+// The ramp geRamp() said is there.
+static C3D_Tex* geRampTex(void) {
+	return g_geRampRgba8 && s_geRamp32State > 0 ? &s_geRamp32 : &s_geRamp;
 }
 
 static u32 tevK(const u8 k[3]) {
@@ -3865,7 +3889,8 @@ static bool drawGlossEnv(const Model3D* m, const GlossRec* r, int n) {
 	C3D_ProcTexBind(0, NULL);
 	if (!s_envNoSphere)
 		C3D_TexBind(1, (C3D_Tex*)s_carEnvTex);
-	C3D_TexBind(2, &s_geRamp);
+	C3D_Tex* const ramp = geRampTex();
+	C3D_TexBind(2, ramp);
 	C3D_TexEnvBufUpdate(C3D_RGB, 1);
 
 	C3D_TexEnv* e = C3D_GetTexEnv(1);
@@ -3972,7 +3997,7 @@ static bool drawGlossEnv(const Model3D* m, const GlossRec* r, int n) {
 
 	C3D_TexEnvBufUpdate(C3D_Both, 0);
 	model3d_tex_unit_off(1, s_carEnvTex);
-	model3d_tex_unit_off(2, &s_geRamp);
+	model3d_tex_unit_off(2, ramp);
 	for (int st = 1; st <= 5; st++) {
 		e = C3D_GetTexEnv(st);
 		C3D_TexEnvInit(e);
@@ -4378,7 +4403,12 @@ u32 g_hlDefer = 1;
 // cured it: the 3DS still loses an occasional scenehl draw, which in one pass
 // is the road itself, in two passes only the beam's added light. One pass
 // stays for DbgBeamOnePass=1 (it saved ~1-5 ms of GPU).
-u32 g_hlOnePass = 0;
+// #553 (2026-11-26): ON again. The New 3DS tour put the two-pass overlay's
+// pixels at ~3.7 ms; with one pass switched on live the user drove the beam
+// over the road: "Road is solid" -- #481's split flush (C3D_FrameSplit with
+// GX_CMDLIST_FLUSH, 2026-11-10) came after #442 and is the likely cure of the
+// lost scenehl draws. DbgBeamOnePass=0 (the tour's "beam2pass") is the A/B.
+u32 g_hlOnePass = 1;
 static bool s_hlTwoPassStep = false;   // the look sweep's beam2pass step
 
 void model3d_beam_two_pass(bool on)

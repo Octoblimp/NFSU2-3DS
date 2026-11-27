@@ -122,7 +122,7 @@ typedef struct {
 	bool vram;
 	void* depth;               // its own depth, the eye's copied in each frame
 	bool depthVram;
-	GPU_DEPTHBUF depthFmt;
+	GPU_DEPTHBUF depthFmt;     // as the eye's now; the memory is sized for D24S8
 	bool failed;
 	u16 width;                 // the eye target's, 240
 	u16 rows;                  // the eye target's: 400, or 800 wide (stereo.h)
@@ -284,8 +284,15 @@ static bool aliasEye(u16 width, u16 rows, GPU_DEPTHBUF depthFmt) {
 			memset(e, 0, sizeof(*e));
 		return false;
 	}
-	if (e->alias)
+	if (e->alias) {
+		if (e->depthFmt != depthFmt) {   // #553: eye 0's format changed in place
+			e->depthFmt = depthFmt;
+			e->depth = (u8*)l->depth + C3D_CalcDepthBufSize(width, PANEL_H, depthFmt);
+			C3D_FrameBufDepth(&e->target.frameBuf, e->depth, depthFmt);
+			e->drawn = 0;
+		}
 		return true;
+	}
 	freeEye(e);
 	e->alias = true;
 	e->width = width;
@@ -305,8 +312,15 @@ static bool makeEye(int i, u16 width, u16 rows, GPU_DEPTHBUF depthFmt) {
 	if (i == 1 && aliasEye(width, rows, depthFmt))
 		return true;
 	TrailEye* e = &s.eye[i];
-	if (e->width != width || (e->buf && e->depthFmt != depthFmt))
+	if (e->width != width)
 		freeEye(e);
+	else if (e->buf && e->depthFmt != depthFmt) {
+		// #553: the buffer is sized for D24S8, the largest the eye uses, so a
+		// change of format is made in place and the trails start afresh.
+		e->depthFmt = depthFmt;
+		C3D_FrameBufDepth(&e->target.frameBuf, e->depth, depthFmt);
+		e->drawn = 0;
+	}
 	e->width = width;
 	if (e->buf && e->cap >= rows) {
 		eyeRows(e, rows);
@@ -321,7 +335,9 @@ static bool makeEye(int i, u16 width, u16 rows, GPU_DEPTHBUF depthFmt) {
 		e->vram = e->depthVram = false;
 	}
 	const u32 bytes = (u32)width * rows * 4;
-	const u32 dbytes = C3D_CalcDepthBufSize(width, rows, depthFmt);
+	// #553: sized for D24S8 whatever the format now, so the eye's format can
+	// change in place (makeEye's top).
+	const u32 dbytes = C3D_CalcDepthBufSize(width, rows, GPU_RB_DEPTH24_STENCIL8);
 	// VRAM only, as citro3d's targets: no target with its buffers in linear
 	// memory has been drawn on on hardware, so none is risked here.
 	// Every placement of the pair, opposite banks first (citro3d's

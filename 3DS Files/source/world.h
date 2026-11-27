@@ -245,6 +245,7 @@ int world_gpu_frame_end(u64* outFirstTick);
 // #345: the ticks the whole-heap cache flushes of the kicks took, and how
 // many there were, since the last call (which clears them).
 void world_flush_stats(u64* ticks, u32* count);
+u64  world_gpu_idle_take(void);   // #553: the GPU's waits on the CPU between kicks
 // Whether bank textures uploaded from now on take their mip chains. On by
 // default since #252 (see world.c s_bankMips); off is the #229-#252 frame.
 void world_set_mip_chains(bool on);

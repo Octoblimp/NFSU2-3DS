@@ -603,6 +603,12 @@ int opponent_build_encounter(OpponentField* f, int count, const CarDb* db,
 	int playerCarType, int strength, u32* rng, const OpponentMatch* match,
 	void (*log)(const char* msg));
 
+// PORT (the user, 2026-11-26): a car for one of the map's racers
+// (encounter.h, Roamers) -- the encounter's own pick, PickRandomCarsOfSomeSort
+// at the player's measure (the SUV list when the player drives one). Only the
+// type: no ride, no model. -1 when the table has nothing.
+int opponent_pick_roam_car(const CarDb* db, int playerCarType, u32* rng);
+
 // Loads the stock car, CARS/<dir>.nfsc out of `dataRoot` (the game data
 // directory as a full path, e.g. "sdmc:/nfsu2data"), for each opponent with
 // no model yet -- the caller assembles the ones it can from their rides

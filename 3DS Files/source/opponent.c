@@ -888,6 +888,13 @@ int opponent_build_remote(OpponentField* f, const OpponentRemote* r, int n,
 
 // ---------------------------------------------------- AddRandomEncounterCars
 
+int opponent_pick_roam_car(const CarDb* db, int playerCarType, u32* rng) {
+	if (!db || db->count <= 0 || !rng) return -1;
+	const float pm = carMeasure(db, playerCarType);
+	return pickRandomCar(db, rng, isSuv(playerCarType), -1.0f, pm < 0.0f ? 0.0f : pm,
+		playerCarType, true);
+}
+
 int opponent_build_encounter(OpponentField* f, int count, const CarDb* db,
 		int playerCarType, int strength, u32* rng, const OpponentMatch* match,
 		void (*log)(const char* msg)) {

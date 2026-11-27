@@ -54,6 +54,10 @@ C3D_RenderTarget* stereo_top_create(u32 transferFlags);
 // it always is. Set by stereo_frame_start(), before the frame's clears.
 bool stereo_wide(void);
 
+// #553: the top screen's depth format (main.c's g_leanDepth): D24 or D24S8,
+// switched in place between frames.
+void stereo_set_depth_fmt(GPU_DEPTHBUF fmt);
+
 bool stereo_init(void (*log)(const char*), C3D_RenderTarget* left, u32 transferFlags);
 
 // Right after the frame's clears: nothing of last frame's stereo carries over.

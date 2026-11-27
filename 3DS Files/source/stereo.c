@@ -65,6 +65,7 @@ typedef struct {
 
 static struct {
 	bool tried, ready;
+	C3D_RenderTarget* top;     // stereo_top_create()'s, before stereo_init() pairs it
 	C3D_RenderTarget* left;
 	C3D_RenderTarget* right;
 	C3D_RenderTarget* overlay;
@@ -153,7 +154,20 @@ C3D_RenderTarget* stereo_top_create(u32 transferFlags) {
 	}
 	if (t)
 		C3D_RenderTargetSetOutput(t, GFX_TOP, GFX_LEFT, transferFlags);
+	s.top = t;
 	return t;
+}
+
+// #553: every top-screen depth buffer is sized for D24S8 (4 bytes a pixel),
+// so D24 (3) fits the same memory and the format can change between frames.
+// Each frame clears the depth first (C3D_RenderTargetClear() fills by the
+// frame buffer's format) and nothing keeps a depth across frames, so the
+// next frame starts as any other.
+void stereo_set_depth_fmt(GPU_DEPTHBUF fmt) {
+	if (s.top && s.top->frameBuf.depthBuf)
+		C3D_FrameBufDepth(&s.top->frameBuf, s.top->frameBuf.depthBuf, fmt);
+	if (s.right && s.right->frameBuf.depthBuf)
+		C3D_FrameBufDepth(&s.right->frameBuf, s.right->frameBuf.depthBuf, fmt);
 }
 
 bool stereo_wide(void) {
@@ -180,7 +194,7 @@ bool stereo_init(void (*log)(const char*), C3D_RenderTarget* left, u32 transferF
 		say(log, "no VRAM for the right eye -- the top screen stays flat");
 		return false;
 	}
-	C3D_FrameBufDepth(&s.right->frameBuf, left->frameBuf.depthBuf, GPU_RB_DEPTH24_STENCIL8);
+	C3D_FrameBufDepth(&s.right->frameBuf, left->frameBuf.depthBuf, left->frameBuf.depthFmt);
 	C3D_RenderTargetSetOutput(s.right, GFX_TOP, GFX_RIGHT, transferFlags);
 	s.overlay = s.packed ? targetOver((u8*)s.topDepth + EYE_BYTES, OV_W, PANEL_H)
 		: C3D_RenderTargetCreate(OV_W, PANEL_H, GPU_RB_RGBA8, -1);

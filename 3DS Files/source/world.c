@@ -4388,12 +4388,34 @@ void world_flush_stats(u64* ticks, u32* count) {
 	s_flushes = 0;
 }
 
+// #553: the GPU's idle stretches inside a frame -- a kick that finds the
+// queue already drained waited on the CPU since the queue's last list ended.
+// citro3d's own queue callback (the swap) is chained, not replaced.
+static void (*s_qcbNext)(gxCmdQueue_s*);
+static volatile u64 s_qDrainedAt;
+static u64 s_gpuIdleTicks;
+static void queueDrained(gxCmdQueue_s* q) {
+	s_qDrainedAt = svcGetSystemTick();
+	if (s_qcbNext)
+		s_qcbNext(q);
+}
+u64 world_gpu_idle_take(void) {
+	const u64 t = s_gpuIdleTicks;
+	s_gpuIdleTicks = 0;
+	return t;
+}
+
 static void gpuKick(void) {
 	const u64 now = svcGetSystemTick();
+	if (__C3D_Context.callback != queueDrained) {
+		s_qcbNext = __C3D_Context.callback;
+		__C3D_Context.callback = queueDrained;
+	}
 	if (!s_kicks) {
 		heapFlush();
 		s_kickFirst = now;
-	}
+	} else if (__C3D_Context.lastEntry == __C3D_Context.numEntries && s_qDrainedAt > s_kickLast)
+		s_gpuIdleTicks += now - s_qDrainedAt;
 	C3D_FrameSplit(GX_CMDLIST_FLUSH);
 	gpuwatch_mark_queue();
 	gxCmdQueueRun(&__C3D_Context);

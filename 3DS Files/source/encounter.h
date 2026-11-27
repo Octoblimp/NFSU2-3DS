@@ -195,6 +195,53 @@ typedef struct {
 	bool  condLogged;
 } Encounter;
 
+// PORT (the user, 2026-11-26): the map's racers. Free roam's city carries
+// more racers than the encounter's two, spread across the whole map and shown
+// on the minimap and the GPS world map beside the player. The world is paged
+// in round the player only, so these are a car and a position each -- never
+// a model, physics or a driver: each rolls along the racing lines of
+// RoutesFreeRoam.bin (the encounter's own line, linePoint) at its own steady
+// speed, taking a signpost it must, otherwise the road on or a turning at
+// random, and turning round at a dead end. Not retail: an addition.
+#define ROAMERS_MAX 6
+
+typedef struct {
+	int   carType;
+	char  name[24];
+	int   point;         // the route point at `a`
+	int   prev;          // the point before it, not to be turned straight back to
+	int   stuck;         // stretches in a row that went nowhere
+	float anchor[2];     // where it was at the last progress check
+	bool  fwd;
+	float a[3], b[3];    // the line from `point` to the next one
+	float seg, along;    // that stretch's length, and how far along it
+	float speed;         // m/s
+	float pos[3];
+	float yaw;           // the port's world yaw (0 = +X, counter-clockwise)
+} Roamer;
+
+typedef struct {
+	bool  on;
+	int   n;
+	Roamer r[ROAMERS_MAX];
+	u32   rng;
+	float logSec;
+	void (*log)(const char* msg);
+} Roamers;
+
+// Puts ROAMERS_MAX racers on the free-roam routes (gps_load()'s), each at
+// least 400 m from `playerXY` and 300 m from the others, in cars picked at the
+// player's measure from `db`. Returns how many.
+int  roamers_open(Roamers* rs, const CarDb* db, int playerCarType, const float playerXY[2],
+	u32 seed, void (*log)(const char* msg));
+// `playerXY` is where a racer that has stopped getting anywhere is put down
+// away from.
+void roamers_update(Roamers* rs, float dt, const float playerXY[2]);
+static inline void roamers_close(Roamers* rs) {
+	rs->on = false;
+	rs->n = 0;
+}
+
 // What a frame needs. `world[i]` is racer i's CarSimWorld (its own topology
 // coordinate); `traffic` may be NULL.
 typedef struct {

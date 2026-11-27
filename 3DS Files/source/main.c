@@ -227,6 +227,21 @@ static float g_profCmdPeak;
 
 static inline void profBegin(ProfSlot s) { g_profMark[s] = svcGetSystemTick(); }
 
+// #553: the world windows' profile summed since boot, for a hardware run read
+// over GDB without the debug log (print g_perfTot; zero it to start a drive).
+// acc[] are profFlush's slots, the rest cpuSplitFlush's sampled frames.
+// #553: the top screen's depth without the stencil byte nothing uses (D24,
+// 3 bytes a pixel, not D24S8's 4): a quarter less depth traffic for every
+// pixel the world draws, the same 24 bits of depth. DbgLeanDepth=0, or this
+// set over GDB mid-run, puts D24S8 back the next frame.
+volatile bool g_leanDepth = true;
+
+volatile struct {
+	u64 acc[PROF_SLOTS];
+	u32 frames, kicks, kick0N, cpuFrames, draws, switches, flushN;
+	u64 kick0, secs, inst, emit, cars, carEmit, flushT, gpuIdle;
+} g_perfTot;
+
 // The CPU split of world3d (#345): one world frame in CPU_SPLIT_EVERY is timed
 // in finer pieces -- world_draw()'s sections, of which model3d.c's per-instance
 // LOD/cull (updateInstances) and the time inside C3D_DrawElements (citro3d's
@@ -271,10 +286,27 @@ static void cpuSplitFlush(const char* where) {
 		dlog(b);
 		memset(g_cpuWalk, 0, sizeof(g_cpuWalk));
 	}
+	if (!strcmp(where, "world")) {
+		g_perfTot.cpuFrames += (u32)g_cpuFrames;
+		g_perfTot.secs += g_cpuSecs;
+		g_perfTot.inst += g_cpuInst;
+		g_perfTot.emit += g_cpuEmit;
+		g_perfTot.cars += g_cpuCars;
+		g_perfTot.carEmit += g_cpuCarEmit;
+		g_perfTot.draws += g_cpuDraws;
+		g_perfTot.switches += g_cpuSwitches;
+	}
 	{
 		u64 ft;
 		u32 fn;
 		world_flush_stats(&ft, &fn);
+		if (!strcmp(where, "world")) {
+			g_perfTot.flushT += ft;
+			g_perfTot.flushN += fn;
+			g_perfTot.gpuIdle += world_gpu_idle_take();
+		} else {
+			world_gpu_idle_take();
+		}
 		snprintf(b, sizeof(b), "prof %s cpu: %lu whole-heap cache flush(es) in the window, %.0f us "
 			"each, %.1f ms in all", where, (unsigned long)fn,
 			fn ? (double)ft * 1e6 / SYSCLOCK_ARM11 / fn : 0.0, (double)ft * 1000.0 / SYSCLOCK_ARM11);
@@ -383,6 +415,14 @@ static void profFlush(const char* where) {
 	if (g_profSimAhead && n < (int)sizeof(b))
 		snprintf(b + n, sizeof(b) - n, ", sim ahead %u", (unsigned)g_profSimAhead);
 	dlog(b);
+	if (!strcmp(where, "world")) {
+		for (int i = 0; i < PROF_SLOTS; i++)
+			g_perfTot.acc[i] += g_profAcc[i];
+		g_perfTot.frames += (u32)g_profFrames;
+		g_perfTot.kicks += g_profKicks;
+		g_perfTot.kick0 += g_profKick0;
+		g_perfTot.kick0N += g_profKick0N;
+	}
 	cpuSplitFlush(where);
 	memset(g_profAcc, 0, sizeof(g_profAcc));
 	memset(g_profPrev, 0, sizeof(g_profPrev));
@@ -1449,12 +1489,14 @@ static bool loadConfig(int argc, char** argv, Config* out) {
 			g_blendCutCfg = g_blendCut != 0;
 		} else if (strcmp(key, "DbgEarlyKick") == 0) {
 			g_earlyKick = atoi(val) != 0;   // #349's A/B: 0 kicks first at world_draw()
+		} else if (strcmp(key, "DbgLeanDepth") == 0) {
+			g_leanDepth = atoi(val) != 0;   // #553's A/B: 0 is the D24S8 top depth
 		} else if (strcmp(key, "DbgSimAhead") == 0) {
 			g_simAheadOn = atoi(val) != 0;  // #521 round 4's A/B: 0 is the sim after the GPU wait
 		} else if (strcmp(key, "DbgVramTex") == 0) {
 			g_vramTexCfg = atoi(val);       // #352's A/B: 0 all in the linear heap
 		} else if (strcmp(key, "DbgBeamOnePass") == 0) {
-			g_hlOnePass = atoi(val) != 0;   // #412's one-pass A/B; off by default (#442)
+			g_hlOnePass = atoi(val) != 0;   // #412's one-pass A/B; on by default again (#553, off for #442)
 		} else if (strcmp(key, "DbgNoRefl") == 0) {
 			out->dbgNoRefl = atoi(val);
 		} else if (strcmp(key, "DbgNoWorldFlares") == 0) {
@@ -30189,6 +30231,7 @@ static void drawGameMapIcon(const MenuState* m, C2D_Image img, float sx, float s
 // The World's AI cars for the map (defined beside g_enc): a race's field, or
 // career free roam's encounter racers; NULL for none.
 static const OpponentField* gmAiField(void);
+static const Roamers* gmRoamers(void);   // the map's racers, NULL for none
 static bool gmAiPoofed(int k);
 static void drawGameMap(const MenuState* m) {
 	const int mi = m->trackMapWidget;
@@ -30266,6 +30309,22 @@ static void drawGameMap(const MenuState* m) {
 			float sx, sy;
 			if (gamemap_place(gm, o->sim.pos[0], o->sim.pos[1], &sx, &sy))
 				drawGameMapIcon(m, img, sx, sy, iconPx, (float)M_PI * 0.5f - o->sim.yaw, c);
+		}
+	}
+	// The map's racers (encounter.h, Roamers), on the next AIRACER widget's art
+	// like the encounter's.
+	const Roamers* rm = gmRoamers();
+	if (ap >= 0 && rm) {
+		const FngWidget* pw = &m->screen.widgets[ap];
+		const u32 c = pw->hasColor
+			? menuWidgetColor(m, mi, pw->colorR, pw->colorG, pw->colorB, pw->colorA)
+			: menuWidgetColor(m, mi, 255, 255, 255, 255);
+		const C2D_Image img = texcache_find(&m->texCache, pw->resourceHash);
+		for (int k = 0; k < rm->n; k++) {
+			float sx, sy;
+			if (gamemap_place(gm, rm->r[k].pos[0], rm->r[k].pos[1], &sx, &sy))
+				drawGameMapIcon(m, img, sx, sy, iconPx,
+					(float)M_PI * 0.5f - rm->r[k].yaw, c);
 		}
 	}
 	// The car, north up, its nose along its heading (minimap.c's carAngle with
@@ -34774,6 +34833,9 @@ static RaceRun g_raceRun;
 // Career free roam's racers (encounter.h, TASKS.md #268 H): g_raceRun.field
 // holds their cars while no race is on.
 static Encounter g_enc;
+// PORT (the user, 2026-11-26): the map's racers -- a car and a position each,
+// on the minimap and the world map only (encounter.h, Roamers).
+static Roamers g_roam;
 // The Outrun's share here (#268 H step 2): whether engage event 9 is up, as
 // FEngHud::NotifyRandomEncounterCar last left it; whether the getaway was on
 // last frame (NotifyBeginGetAway on its start); and the RaceOverMessage's
@@ -34793,6 +34855,9 @@ static EncounterOver g_encOver;
 static bool fieldLive(void) { return g_raceRun.on || g_enc.on; }
 static const OpponentField* gmAiField(void) {
 	return g_raceRun.on ? &g_raceRun.field : (g_enc.on ? g_enc.f : NULL);
+}
+static const Roamers* gmRoamers(void) {
+	return g_roam.on && !g_raceRun.on ? &g_roam : NULL;
 }
 static bool gmAiPoofed(int k) {
 	return !g_raceRun.on && k >= 0 && k < ENCOUNTER_CARS && g_enc.poofed[k];
@@ -34891,6 +34956,7 @@ static void raceFieldFree(RaceRun* rr) {
 	const u32 linBefore = (u32)linearSpaceFree();
 	const int had = rr->field.count;
 	encounter_close(&g_enc);   // free roam's racers live in the same field
+	roamers_close(&g_roam);
 	carsfxAiShutdown();   // their engine sounds (CSTATEMGR_AICar's states)
 	memset(g_aiSndLastSpeed, 0, sizeof(g_aiSndLastSpeed));
 	opponent_free(&rr->field);
@@ -43065,6 +43131,7 @@ static bool freeRunRacers(void) {
 static void freeRoamRacersOpen(const Config* cfg) {
 	RaceRun* rr = &g_raceRun;
 	encounter_close(&g_enc);
+	roamers_close(&g_roam);
 	if (!(g_worldFromCareer || freeRunRacers()) || g_qr.on || rr->on)
 		return;
 	// #413: not for a world opened to race in -- a race's region switch or a
@@ -43139,6 +43206,9 @@ static void freeRoamRacersOpen(const Config* cfg) {
 	}
 	encounter_open(&g_enc, &rr->field, &g_fieldCars, cfg->dbgEncounterSec, dlog);
 	g_enc.dbgPlaceM = cfg->dbgEncounterPlaceM;
+	// The map's racers (the user, 2026-11-26): cars and positions only.
+	const float pxy[2] = { g_worldPos[0], g_worldPos[1] };
+	roamers_open(&g_roam, &g_fieldCars, g_worldCarType, pxy, (u32)svcGetSystemTick(), dlog);
 }
 
 // What CheckForRightConditions and CanTrigger read this frame (encounter.h).
@@ -50507,6 +50577,10 @@ static void worldInput(u32 kHeld, u32 kDown, float dt) {
 	// Player::UpdateGameState's speed-ratio sample (TASKS.md #255).
 	speedRatioUpdate(dt);
 
+	// The map's racers roll on along their lines (encounter.h, Roamers).
+	if (g_roam.on && !g_raceRun.on)
+		roamers_update(&g_roam, dt, g_worldPos);
+
 	// Career free roam's racers (encounter.h, #268 H): RandomEncounterState's
 	// timer, the manager's placing and each car on the road's drive, once the
 	// traffic has moved; then their contacts, as a race's field's below.
@@ -54991,6 +55065,12 @@ enum {
 	SA_FXOLD   = 1 << 2,  // the marker particles as before: the faint ones and zero-alpha texels drawn
 	SA_SIMOLD  = 1 << 4,  // round 4: the sim after the GPU wait, as before (DbgSimAhead=0)
 	SA_KICKOLD = 1 << 3,  // round 3: the road's reflection handed over whole at world_draw()'s kick, as before
+	SA_DEPTHOLD = 1 << 5, // #553: the top screen's depth as before, D24S8 (DbgLeanDepth=0)
+	SA_RAMPOLD  = 1 << 6, // #553: the cars' gloss + reflection ramp as RGBA8, as before (LA8 now)
+	SA_CARCUT   = 1 << 7, // #553: the player's car body in an 8x8 corner: its draws and vertices, no pixels
+	SA_NOPLNEON = 1 << 8, // #553: the player's underglow alone out
+	SA_NOPLFLARE= 1 << 9, // #553: the player's light flares (carlights_draw) alone out
+	SA_NOPLFLAME= 1 << 10,// #553: the player's nitrous flame (carfx_draw) alone out
 };
 
 typedef struct {
@@ -55043,13 +55123,14 @@ static const SweepStep kLookSteps[] = {
 	{ "nofx",     WORLD_TEX_CHAIN,    SW_TINT | SW_BEAM | SW_REFL | SW_FLARES | SW_BLEND |
 	                                  SW_FOG | SW_ENV },
 	{ "noworld",  WORLD_TEX_CHAIN,    SW_WORLD },
-	// #521 rounds 3 and 4 (2026-11-11), each put back: the reflection's early
-	// kicks, and the sim run a frame ahead. They sit beside the closing base
-	// because a stop's first steps are inflated by the teleport's streaming
-	// (tour #6 could not read kickold in step 2). Round 2's envold / botfull /
-	// fxold steps were read on tour #5 and went; their SA_ bits stay.
-	{ "kickold",  WORLD_TEX_CHAIN,    0, SA_KICKOLD },
-	{ "simold",   WORLD_TEX_CHAIN,    0, SA_SIMOLD },
+	// #553 (2026-11-26): "d24s8" (the old depth) was read on two tours, within
+	// noise, and went; SA_DEPTHOLD stays, as #521's kickold / simold bits do.
+	// #553 beam: "beam2pass" (#412's) draws the beam in two passes again, as
+	// DbgBeamOnePass=0 -- one pass's saving, now it is on by default; nobeam
+	// beside it is the beam's whole. Read and gone: the car steps (rampold;
+	// plneon / plflare / plflame; carcut), the zero cut's "beamall" (no gain)
+	// and "beampix" (the two-pass overlay's pixels, -3.7 ms).
+	{ "beam2pass", WORLD_TEX_CHAIN,   SW_BEAM2P },
 	{ "base",     WORLD_TEX_CHAIN,    0 },
 };
 #define LOOK_STEPS  ((int)(sizeof(kLookSteps) / sizeof(kLookSteps[0])))
@@ -55082,6 +55163,11 @@ static struct {
 // What the render path reads: the skip bits of the step in force.
 static u32 g_sweepSkip;
 static u32 g_sweepAlt;   // #521: the step's SA_ bits
+// #553: set over GDB to start a sweep mid-run (3 = the perf tour), as
+// DbgGpuSweep / DbgPerfTour would at boot.
+volatile int g_dbgSweepReq;
+// #553: the player's body draw, last frame: draw calls and triangles.
+volatile u32 g_plBodyCalls, g_plBodyTris;
 
 // The sweep's table and its length.
 static const SweepStep* sweepSteps(int* n) {
@@ -55506,6 +55592,7 @@ static void sweepApply(const Config* cfg, int step) {
 	afx_set_lean(!(s->alt & SA_FXOLD));
 	g_dbgNoBlend = cfg->dbgNoBlend || (s->skip & SW_BLEND);
 	g_sweepGlossEnvSplit = (s->skip & SW_CARSPLIT) != 0;
+	g_geRampRgba8 = (s->alt & SA_RAMPOLD) != 0;   // #553
 	model3d_set_env_pmin((s->skip & SW_ENVGC) ? 32 : cfg->dbgEnvPMin);
 	model3d_set_env_pick_once(!(s->skip & SW_ENVGC) && !cfg->dbgEnvPickEach);
 	world_set_draw_debug(cfg->dbgNoFarScenery || (s->skip & SW_FAR), cfg->dbgNearLod,
@@ -55553,6 +55640,11 @@ static const TourStop kTourStops[] = {
 	{ "D24",        61.6f,   828.9f, 30.8f,           6.0f }, // the yardstick
 };
 #define TOUR_STOPS ((int)(sizeof(kTourStops) / sizeof(kTourStops[0])))
+// #553: the tour's frame / gpu means, a stop's steps a row, for GDB to read
+// (the log has them too); g_tourResStops is how many stops are in.
+volatile float g_tourRes[8][LOOK_STEPS][2];
+volatile int g_tourResStops;
+_Static_assert(TOUR_STOPS <= 8, "g_tourRes holds every stop");
 static struct {
 	bool on;
 	bool done;
@@ -55672,6 +55764,12 @@ static void sweepTick(const Config* cfg, bool parked, float frameMs, float gpuMs
 	r[0] = (float)(g_sweep.frameMs / window);
 	r[1] = (float)(g_sweep.gpuMs / window);
 	r[2] = (float)(g_sweep.buildMs / window);
+	if (g_tour.on && g_sweep.look && st < LOOK_STEPS) {
+		g_tourRes[g_tour.stop][st][0] = r[0];
+		g_tourRes[g_tour.stop][st][1] = r[1];
+		if (st + 1 == nSteps)
+			g_tourResStops = g_tour.stop + 1;
+	}
 	// Both framebuffers hold this step's look by now: the parked view has not
 	// moved for the settle frames and the window.
 	if (g_tour.on) {
@@ -56672,10 +56770,9 @@ static void drawWorldBottom(C2D_TextBuf buf, const Config* cfg) {
 			aiMarkers[n].element = MINIMAP_ELEM_AIRACER;
 			aiMarkers[n].turns = true;
 			aiMarkers[n].heading = o->sim.yaw;
-			// MinimapElement::Update: solid while it leads the race (its
-			// RacingCar +10, the place, is 1), 0x80 behind (#241).
-			aiMarkers[n].dim = o->raceCar >= 0 &&
-				race_position(&g_raceRun.race, o->raceCar + 1) != 1;
+			// MinimapElement::Update gives a racer behind the leader alpha
+			// 0x80 (#241). PORT (the user, 2026-11-26): always solid.
+			aiMarkers[n].dim = false;
 			n++;
 		}
 		marks = aiMarkers;
@@ -56726,8 +56823,9 @@ static void drawWorldBottom(C2D_TextBuf buf, const Config* cfg) {
 	// PORT (#543): not while the GPS is engaged -- the target is then the
 	// map's only icon. A getaway in progress keeps its racer: that is a race
 	// the player is in, not a map icon.
-	static MinimapMarker freeMarks[WORLD_MAX_MARKERS + ENCOUNTER_CARS];
-	if (!g_raceRun.on && g_enc.on && !(g_wc.active) && (!gps.engaged || g_enc.ga.on)) {
+	static MinimapMarker freeMarks[WORLD_MAX_MARKERS + ENCOUNTER_CARS + ROAMERS_MAX];
+	if (!g_raceRun.on && (g_enc.on || g_roam.on) && !(g_wc.active) &&
+			(!gps.engaged || g_enc.ga.on)) {
 		int n = 0;
 		for (int i = 0; i < markCount && n < WORLD_MAX_MARKERS; i++)
 			freeMarks[n++] = marks[i];
@@ -56743,10 +56841,22 @@ static void drawWorldBottom(C2D_TextBuf buf, const Config* cfg) {
 			mk->element = MINIMAP_ELEM_AIRACER;
 			mk->turns = true;
 			mk->heading = o->sim.yaw;
-			// Only the getaway's AI is a RacingCar (Race's two, type 7):
-			// 0x80 while the player leads it (#241). The other racer keeps
-			// its widget's 255.
-			mk->dim = g_enc.ga.on && i == g_enc.ga.ai && g_enc.ga.playerLeads;
+			// Retail dims the getaway's AI while the player leads it (#241).
+			// PORT (the user, 2026-11-26): racers are always solid.
+			mk->dim = false;
+		}
+		// The map's racers (encounter.h, Roamers), the same orange car --
+		// not during an Outrun, which is a race.
+		for (int i = 0; g_roam.on && !g_enc.ga.on && i < g_roam.n; i++) {
+			const Roamer* r = &g_roam.r[i];
+			MinimapMarker* mk = &freeMarks[n++];
+			memset(mk, 0, sizeof(*mk));
+			mk->worldX = r->pos[0];
+			mk->worldY = r->pos[1];
+			mk->texHash = MINIMAP_ICON_CAR;
+			mk->element = MINIMAP_ELEM_AIRACER;
+			mk->turns = true;
+			mk->heading = r->yaw;
 		}
 		marks = freeMarks;
 		markCount = n;
@@ -59847,6 +59957,16 @@ int main(int argc, char* argv[])
 		// frame's strip, read back outside a frame (magCaptureRead()).
 		magCaptureRead();
 
+		// #553: the top screen's depth format, applied between frames.
+		{
+			static int depthApplied = -1;
+			const int want = g_leanDepth && !(g_sweepAlt & SA_DEPTHOLD) ? 1 : 0;
+			if (want != depthApplied) {
+				stereo_set_depth_fmt(want ? GPU_RB_DEPTH24 : GPU_RB_DEPTH24_STENCIL8);
+				depthApplied = want;
+				dlog(want ? "display: top depth D24 (no stencil)" : "display: top depth D24S8");
+			}
+		}
 		profBegin(PROF_VSYNC);
 		// #352: the bank's VRAM moves, outside a frame: C3D_SyncTextureCopy()
 		// there waits for the last frame's GPU (the wait C3D_FrameBegin() does
@@ -64062,8 +64182,21 @@ int main(int argc, char* argv[])
 						model3d_set_car_parts(&pose);
 					}
 					g_litCar = 0;
+					if (g_sweepAlt & SA_CARCUT)   // #553's tour step
+						C3D_SetScissor(GPU_SCISSOR_NORMAL, 0, 0, 8, 8);
+					u32 bc0, bt0, bc1, bt1;
+					model3d_draw_stats(&bc0, &bt0);
 					model3d_draw_car_xform(g_car, &wvp, (const float (*)[3])g_sim.rot,
 						g_sim.origin);
+					model3d_draw_stats(&bc1, &bt1);
+					g_plBodyCalls = bc1 - bc0;   // #553, read over GDB
+					g_plBodyTris = bt1 - bt0;
+					if (g_sweepAlt & SA_CARCUT) {
+						if (g_sweepSkip & SW_SCISSOR)
+							C3D_SetScissor(GPU_SCISSOR_NORMAL, 0, 0, 8, 8);
+						else
+							C3D_SetScissor(GPU_SCISSOR_DISABLE, 0, 0, 0, 0);
+					}
 					gpuwatch_trace("player car");
 				}
 				// The AI field, from the same sim state and the same draw call, so
@@ -64201,7 +64334,7 @@ int main(int argc, char* argv[])
 				// The underglow, after every car has written its depth so the
 				// body hides what it should of the tubes under it. Additive like
 				// the effects below, and unfogged for the same reason.
-				if (g_car && g_simReady && drawPlayerCar)
+				if (g_car && g_simReady && drawPlayerCar && !(g_sweepAlt & SA_NOPLNEON))
 					carneon_draw(&g_carNeon, &wvp, &g_neonView,
 						(const float (*)[3])g_sim.rot, g_sim.origin, NULL,
 						g_shoot.up && carpartanim_loaded() ? g_carBayT : NULL);
@@ -64226,7 +64359,7 @@ int main(int argc, char* argv[])
 				// out is left out with its flares. Every car's headlights are on:
 				// the Car constructor sets +0x93c and only a honk changes it.
 				// (carlights_frame() ran before the reflection.)
-				if (g_car && g_simReady && drawPlayerCar)
+				if (g_car && g_simReady && drawPlayerCar && !(g_sweepAlt & SA_NOPLFLARE))
 					carlights_draw(&g_carLights, &wvp, &g_neonView,
 						(const float (*)[3])g_sim.rot, g_sim.origin,
 						CARLIGHTS_HEAD_ON | carFlareFlags() |
@@ -64278,7 +64411,7 @@ int main(int argc, char* argv[])
 					profBegin(PROF_FX);
 					afx_draw(g_afx, &wvp, &g_afxView);
 					// The car's nitrous flame (#317), with the effects.
-					if (drawPlayerCar)
+					if (drawPlayerCar && !(g_sweepAlt & SA_NOPLFLAME))
 						carfx_draw(&wvp, &g_afxView);
 					profEnd(PROF_FX);
 				}
@@ -64677,6 +64810,11 @@ int main(int argc, char* argv[])
 				const bool zone = g_zoneRace != NULL || g_zoneShop != NULL;
 				engage_set_stage0_phone(g_engage,
 					engage_events_state(&g_engageEvents, ENGAGE_EVENT_STAGE0));
+				// #552: the SMS's arrival -- the message's own envelope, blinking
+				// in its colour -- before it settles orange.
+				engage_set_sms_arrival(g_engage,
+					engage_events_state(&g_engageEvents, ENGAGE_EVENT_SMS),
+					sms_arrival_envelope(&gProfile, g_smsDb));
 				// PORT (#447): the arrows point the way the binding has Enter
 				// Shop and the SMS; one on a button lights no arrow and its
 				// badge sits where the arrow would.
@@ -65314,6 +65452,10 @@ int main(int argc, char* argv[])
 		if (haveConfig && cfg.dbgWideShot > 0.0f)
 			wideShotTick(cfg.dbgWideShot, frameMs * 0.001f);
 		if (bootState == BOOT_WORLD) {
+			if (g_dbgSweepReq) {   // #553: started over GDB
+				cfg.dbgGpuSweep = g_dbgSweepReq;
+				g_dbgSweepReq = 0;
+			}
 			sweepTick(&cfg, g_simReady && fabsf(g_sim.speed) < 0.3f &&
 				worldUi == WORLD_UI_NONE, frameMs, gpuMs,
 				(float)TKMS(frameStart, svcGetSystemTick()));

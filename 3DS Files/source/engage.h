@@ -190,6 +190,15 @@ void engage_draw(Engage* e, bool smsWaiting, bool canEngage, int indicatorType);
 // no zone and no mail it takes the Cingular logo's place.
 void engage_set_stage0_phone(Engage* e, int slotState);
 
+// The SMS event's slot state (engage_events_state(), 0 none) and the arriving
+// message's SMSMessageCategories (sms_arrival_envelope()), set before
+// engage_draw(). States 2 and 3 are UpdateSMS's arrival (Speed.elf
+// 0x80111014): the envelope swapped for the category's art in its colour on
+// the envelope's "animation" script, the right arrow on "pulse", the
+// centre on "Pulse" -- the phone in state 2, the Cingular icon in 3. Four
+// seconds from Start the slot reaches 4 and the envelope settles orange.
+void engage_set_sms_arrival(Engage* e, int slotState, int envelope);
+
 // PORT (#447): the D-pad direction each lit arrow stands for -- Enter Shop's
 // (retail's up) and the SMS's (retail's right) -- from the profile's binding:
 // 0 up, 1 right, 2 down, 3 left, or ENGAGE_DIR_BUTTON when the action is on a

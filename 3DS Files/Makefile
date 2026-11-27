@@ -56,8 +56,10 @@ APP_VERSION_MINOR	:= 0
 # 1.0.1: the trunk audio fix (a fitted layout hid the audio slots) and the
 #   PC tools fixes since 1.0.0 (the user: "The bug fix will be a new version").
 # 1.0.2: the racers' retail race route pass (#549, the user: "Ship it as 1.0.2").
+# 1.0.3: racers no longer weave on straights (#550) and the SMS envelope's
+#   arrival animation (#552) (the user: "This can be version 1.0.3").
 # MINOR has 6 bits (0..63), MICRO 4 (0..15).
-APP_VERSION_MICRO	:= 2
+APP_VERSION_MICRO	:= 3
 
 # The HOME Menu banner (a spinning 3D logo, CGFX), its stereo sound and the
 # icon, made from the PC data by tools/make_banner.py (build_cia.ps1 runs it

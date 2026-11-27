@@ -2217,3 +2217,230 @@ void encounter_update(Encounter* e, const EncounterFrame* fr) {
 		fr->log(b);
 	}
 }
+
+// ------------------------------------------------------------ the map's racers
+// PORT (encounter.h, Roamers): not retail.
+
+#define ROAM_PLAYER_M  400.0f
+#define ROAM_APART_M   300.0f
+#define ROAM_TRIES     400
+#define ROAM_ON        0.6f    // the road on at a turning, else a turning
+#define ROAM_CHECK_SEC 30.0f   // the progress check's period
+#define ROAM_CHECK_M   100.0f  // the ground a racer must make in it
+
+// The next point from (`*p`, `*fwd`): a signpost it must take (type 2), else
+// the road on or one of the turnings that apply at random. False at a dead
+// end (type 3, or no road on and no turning).
+static bool roamAdvance(Roamers* rs, int prev, int* p, bool* fwd) {
+	int cand[8];
+	bool candFwd[8];
+	int nc = 0;
+	const int n = gps_point_num_signs(*p);
+	for (int k = 0; k < n; k++) {
+		const int sg = gps_point_sign(*p, k);
+		const u32 bits = gps_sign_bits(sg);
+		if (((bits >> 18) & 1u) == (u32)(*fwd ? 1 : 0))
+			continue;
+		const u32 type = bits & 15u;
+		if (type == 3)
+			return false;
+		const int to = gps_sign_to(sg);
+		// Not straight back where it came from: two routes' end points can
+		// sit on one spot, each signposted to the other.
+		if (to < 0 || to == prev || type == 5 || type == 10)
+			continue;
+		const bool newFwd = (((bits >> 23) & 1u) != 0) != *fwd;
+		if (type == 2) {
+			*p = to;
+			*fwd = newFwd;
+			return true;
+		}
+		if (nc < 8) {
+			cand[nc] = to;
+			candFwd[nc] = newFwd;
+			nc++;
+		}
+	}
+	const int next = gps_point_next(*p, *fwd);
+	if (next >= 0 && (nc == 0 || encRandom(&rs->rng) < ROAM_ON)) {
+		*p = next;
+		return true;
+	}
+	if (nc > 0) {
+		int k = (int)(encRandom(&rs->rng) * (float)nc);
+		if (k >= nc) k = nc - 1;
+		*p = cand[k];
+		*fwd = candFwd[k];
+		return true;
+	}
+	return false;
+}
+
+// The racer on to its next stretch of line.
+static void roamStep(Roamers* rs, Roamer* r) {
+	int p = r->point;
+	bool f = r->fwd;
+	if (!roamAdvance(rs, r->prev, &p, &f))
+		f = !f;   // a dead end: back the other way
+	EncounterNode nd;
+	linePoint(p, f, &nd);
+	memcpy(r->a, r->b, sizeof(r->a));
+	memcpy(r->b, nd.pos, sizeof(r->b));
+	if (p != r->point)
+		r->prev = r->point;
+	r->point = p;
+	r->fwd = f;
+	r->seg = dist2d(r->a, r->b);
+}
+
+static void roamPose(Roamer* r) {
+	const float t = r->seg > 1e-3f ? clampf(r->along / r->seg, 0.0f, 1.0f) : 0.0f;
+	for (int c = 0; c < 3; c++)
+		r->pos[c] = r->a[c] + (r->b[c] - r->a[c]) * t;
+	if (r->seg > 0.1f)
+		r->yaw = atan2f(r->b[1] - r->a[1], r->b[0] - r->a[0]);
+}
+
+// Racer `self` put down on a random point of the routes: a racing line
+// posted that way, ROAM_PLAYER_M from the player and ROAM_APART_M from the
+// others (half that once the first half of the tries is spent). Its car,
+// name and speed are kept.
+static bool roamPlace(Roamers* rs, int self, const float playerXY[2]) {
+	const int np = gps_num_points();
+	Roamer* r = &rs->r[self];
+	const int others = self < rs->n ? rs->n : self;
+	for (int t = 0; t < ROAM_TRIES; t++) {
+		int p = (int)(encRandom(&rs->rng) * (float)np);
+		if (p >= np) p = np - 1;
+		const bool fwd = encRandom(&rs->rng) < 0.5f;
+		const int rt = gps_point_route(p);
+		if (rt < 0 || !gps_route_has_line(rt, fwd ? 0 : 1) || !gps_point_posted_at_all(p, fwd))
+			continue;
+		EncounterNode nd;
+		linePoint(p, fwd, &nd);
+		const float near = t < ROAM_TRIES / 2 ? 1.0f : 0.5f;
+		if (playerXY && dist2d(nd.pos, playerXY) < ROAM_PLAYER_M * near)
+			continue;
+		bool crowd = false;
+		for (int k = 0; k < others && !crowd; k++)
+			crowd = k != self && dist2d(nd.pos, rs->r[k].pos) < ROAM_APART_M * near;
+		if (crowd)
+			continue;
+		r->point = p;
+		r->prev = -1;
+		r->fwd = fwd;
+		r->stuck = 0;
+		r->along = 0.0f;
+		r->seg = 0.0f;
+		memcpy(r->a, nd.pos, sizeof(r->a));
+		memcpy(r->b, nd.pos, sizeof(r->b));
+		memcpy(r->pos, nd.pos, sizeof(r->pos));
+		r->anchor[0] = nd.pos[0];
+		r->anchor[1] = nd.pos[1];
+		r->yaw = atan2f(nd.dir[1], nd.dir[0]);
+		roamStep(rs, r);
+		roamPose(r);
+		return true;
+	}
+	return false;
+}
+
+int roamers_open(Roamers* rs, const CarDb* db, int playerCarType, const float playerXY[2],
+		u32 seed, void (*log)(const char* msg)) {
+	char b[200];
+	memset(rs, 0, sizeof(*rs));
+	rs->log = log;
+	rs->rng = seed ? seed : 0x52A0B1u;
+	const int np = gps_num_points();
+	if (np <= 0 || !db || db->count <= 0) {
+		if (log) log("roam: no free-roam routes or car table -- no map racers");
+		return 0;
+	}
+	const char* names[8];
+	opponent_random_character_names(names, 8, &rs->rng);
+	for (int i = 0; i < ROAMERS_MAX; i++) {
+		Roamer* r = &rs->r[rs->n];
+		memset(r, 0, sizeof(*r));
+		if (!roamPlace(rs, rs->n, playerXY))
+			break;
+		int car = -1;
+		for (int t = 0; t < 4; t++) {   // a car not already on the map, where it can
+			car = opponent_pick_roam_car(db, playerCarType, &rs->rng);
+			bool dup = false;
+			for (int k = 0; k < rs->n; k++)
+				dup = dup || rs->r[k].carType == car;
+			if (!dup)
+				break;
+		}
+		if (car < 0)
+			break;
+		r->carType = car;
+		snprintf(r->name, sizeof(r->name), "%s", names[i] ? names[i] : "");
+		r->speed = 16.0f + 10.0f * encRandom(&rs->rng);   // ~36-58 mph
+		rs->n++;
+		if (log) {
+			snprintf(b, sizeof(b), "roam: racer %d %s, car type %d, at (%.0f, %.0f), point %d %s, "
+				"%.0f m/s", rs->n - 1, r->name, car, r->pos[0], r->pos[1], r->point,
+				r->fwd ? "fwd" : "back", r->speed);
+			log(b);
+		}
+	}
+	rs->on = rs->n > 0;
+	if (log) {
+		snprintf(b, sizeof(b), "roam: %d map racers on the free-roam routes (minimap + world map only)",
+			rs->n);
+		log(b);
+	}
+	return rs->n;
+}
+
+void roamers_update(Roamers* rs, float dt, const float playerXY[2]) {
+	if (!rs->on || dt <= 0.0f)
+		return;
+	if (dt > 0.25f)
+		dt = 0.25f;
+	for (int i = 0; i < rs->n; i++) {
+		Roamer* r = &rs->r[i];
+		r->along += r->speed * dt;
+		int guard = 0;
+		while (r->along >= r->seg && guard++ < 32) {
+			r->along -= r->seg;
+			roamStep(rs, r);
+		}
+		if (guard >= 32) {
+			r->along = 0.0f;   // stretches that go nowhere: the check below
+			r->stuck = 1;
+		}
+		roamPose(r);
+	}
+	rs->logSec += dt;
+	if (rs->logSec >= ROAM_CHECK_SEC) {
+		rs->logSec = 0.0f;
+		// A racer that has not got ROAM_CHECK_M in that time -- a loop of
+		// points on one spot, a short dead-end road -- is put down afresh.
+		for (int i = 0; i < rs->n; i++) {
+			Roamer* r = &rs->r[i];
+			if (!r->stuck && dist2d(r->pos, r->anchor) >= ROAM_CHECK_M) {
+				r->anchor[0] = r->pos[0];
+				r->anchor[1] = r->pos[1];
+				continue;
+			}
+			const int was = r->point;
+			const float wx = r->pos[0], wy = r->pos[1];
+			if (roamPlace(rs, i, playerXY) && rs->log) {
+				char b[160];
+				snprintf(b, sizeof(b), "roam: racer %d stuck at point %d (%.0f, %.0f) -- put down at "
+					"point %d (%.0f, %.0f)", i, was, wx, wy, r->point, r->pos[0], r->pos[1]);
+				rs->log(b);
+			}
+		}
+	}
+	if (rs->log && rs->logSec == 0.0f) {
+		char b[400];
+		int o = snprintf(b, sizeof(b), "roam:");
+		for (int i = 0; i < rs->n && o < (int)sizeof(b) - 32; i++)
+			o += snprintf(b + o, sizeof(b) - (size_t)o, " %d (%.0f,%.0f)", i, rs->r[i].pos[0],
+				rs->r[i].pos[1]);
+		rs->log(b);
+	}
+}

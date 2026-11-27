@@ -147,6 +147,13 @@ typedef struct {
 	int   count[I_COUNT];
 	float wallSec, offSec, stallSec;
 	float fpSec, fpWallSec; // on FuturePoints, and against a wall on it
+	// The weave on straights (WEAVE_*): [0] driving the AiLine, [1] on
+	// FuturePoints -- seconds, yaw rate and steer squared over them, and the
+	// yaw rate's swings from one side to the other.
+	float stSec[2], stYaw2[2], stSteer2[2], stLat2[2];
+	int   stFlips[2];
+	float stPeak, stHdg;
+	int   stSign;
 	// time spent touching another car of the field, and how many touches
 	float carSec;
 	int   carHits;
@@ -172,6 +179,12 @@ typedef struct {
 } Watch;
 
 #define PRINT_MAX 12
+// The weave measure: a straight is the line within WEAVE_DEG of its heading
+// from 30 m behind the car to 80 m ahead; a swing counts once the yaw rate has
+// passed WEAVE_FLIP_DEGS deg/s on one side before crossing to the other.
+#define WEAVE_DEG 3.0f
+#define WEAVE_SPEED 20.0f
+#define WEAVE_FLIP_DEGS 1.5f
 
 static void incident(const Opponent* o, Watch* m, int kind, float sec, const char* extra)
 {
@@ -676,6 +689,49 @@ int main(int argc, char** argv)
 			}
 			if (wall) m->wallSec += dt;
 			if (o->fpOn) { m->fpSec += dt; if (wall) m->fpWallSec += dt; }
+			// The weave: on a straight (the line's heading within WEAVE_DEG from
+			// 30 m back to 80 m on), at speed and left alone, how fast the
+			// car's heading swings and how often it swings back.
+			{
+				bool straight = f.line && o->sim.speed > WEAVE_SPEED && !o->unstuck &&
+					!o->avoiding && !touching[k] && !wall && o->sim.onGround;
+				float d0[2];
+				if (straight && ailine_pose(f.line, o->lineDist, 0.0f, NULL, d0)) {
+					static const float kAt[3] = { -30.0f, 40.0f, 80.0f };
+					for (int a = 0; a < 3 && straight; a++) {
+						float da[2];
+						if (!ailine_pose(f.line, o->lineDist + kAt[a], 0.0f, NULL, da) ||
+								d0[0] * da[0] + d0[1] * da[1] < cosf(WEAVE_DEG * 0.0174533f))
+							straight = false;
+					}
+				} else straight = false;
+				if (straight) {
+					const int j = o->fpOn ? 1 : 0;
+					// The heading's own rate, frame to frame: what a watcher sees
+					// (sim.w[2] carries the body's jitter as well).
+					const float hdg = atan2f(o->sim.rot[0][1], o->sim.rot[0][0]);
+					float dh = m->stSign || m->stPeak > 0.0f || m->stHdg != 0.0f ? hdg - m->stHdg : 0.0f;
+					while (dh > 3.14159f) dh -= 6.28319f;
+					while (dh < -3.14159f) dh += 6.28319f;
+					m->stHdg = hdg;
+					const float yaw = dh / dt * 57.2958f;
+					m->stSec[j] += dt;
+					m->stYaw2[j] += yaw * yaw * dt;
+					m->stSteer2[j] += o->lastSteerDeg * o->lastSteerDeg * dt;
+					m->stLat2[j] += o->drv.lateral_m * o->drv.lateral_m * dt;
+					const int sg = yaw > 0.0f ? 1 : -1;
+					if (fabsf(yaw) > m->stPeak) m->stPeak = fabsf(yaw);
+					if (sg != m->stSign) {
+						if (m->stSign && m->stPeak > WEAVE_FLIP_DEGS) m->stFlips[j]++;
+						m->stSign = sg;
+						m->stPeak = 0.0f;
+					}
+				} else {
+					m->stSign = 0;
+					m->stPeak = 0.0f;
+					m->stHdg = 0.0f;
+				}
+			}
 			if (touching[k]) {
 				m->carSec += dt;
 				if (!m->prevCar) {
@@ -735,6 +791,14 @@ int main(int argc, char** argv)
 			m->stallSec, m->count[I_WALL], m->count[I_OFFLINE], m->count[I_STALL],
 			m->count[I_WRONG], m->count[I_AIR], m->count[I_RESET], m->count[I_UNSTUCK],
 			m->count[I_HOP], m->carSec, m->carHits, m->mellowSec, m->moverSwaps, m->launchSec, m->fpSec, m->fpWallSec);
+		printf("WEAVE %d%s %-10s line %.1f s yaw %.2f steer %.2f lat %.2f flips %d fp %.1f s yaw %.2f steer %.2f lat %.2f flips %d\n",
+			track, reverse ? "B" : "F", o->name,
+			m->stSec[0], m->stSec[0] > 0 ? sqrtf(m->stYaw2[0] / m->stSec[0]) : 0.0f,
+			m->stSec[0] > 0 ? sqrtf(m->stSteer2[0] / m->stSec[0]) : 0.0f,
+			m->stSec[0] > 0 ? sqrtf(m->stLat2[0] / m->stSec[0]) : 0.0f, m->stFlips[0],
+			m->stSec[1], m->stSec[1] > 0 ? sqrtf(m->stYaw2[1] / m->stSec[1]) : 0.0f,
+			m->stSec[1] > 0 ? sqrtf(m->stSteer2[1] / m->stSec[1]) : 0.0f,
+			m->stSec[1] > 0 ? sqrtf(m->stLat2[1] / m->stSec[1]) : 0.0f, m->stFlips[1]);
 		if (!m->finished || m->count[I_RESET] || m->count[I_STALL] || m->count[I_WRONG])
 			bad++;
 	}

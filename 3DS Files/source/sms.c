@@ -377,6 +377,33 @@ u32 sms_envelope_color(const EventDb* db, const ProfileSmsSlot* m)
 	return (c >= 1 && c <= 7) ? kColor[c - 1] : kColor[7];
 }
 
+u32 sms_envelope_color_of(int envelope)
+{
+	static const u32 kColor[8] = {
+		0xC8C82DFFu, 0xD5802BFFu, 0xCAF48AFFu, 0xCF3030FFu,
+		0x8080FFFFu, 0x3282C8FFu, 0x804AB5FFu, 0x0E9C0EFFu
+	};
+	return (envelope >= 1 && envelope <= 7) ? kColor[envelope - 1] : kColor[7];
+}
+
+int sms_arrival_envelope(const NfsProfile* p, const EventDb* db)
+{
+	if (!p)
+		return 0;
+	unsigned int n = p->smsCount < PROFILE_MAX_SMS ? p->smsCount : PROFILE_MAX_SMS;
+	// UpdateSMS's loop (0x80111074..0x801110E0): from the newest down, while
+	// the slot is read (+4) or deleted (+6); index 0 is never looked at.
+	for (int i = (int)n - 1; i >= 1; i--) {
+		const ProfileSmsSlot* m = &p->sms[i];
+		if (m->read == 1 || m->deleted == 1)
+			continue;
+		const SmsRec* rec = smsRec(db, m);
+		const int c = rec ? (int)rec->envelope : 0;
+		return (c >= 1 && c <= 7) ? c : 0;
+	}
+	return 0;
+}
+
 unsigned int sms_count_unread(const NfsProfile* p) {
 	if (!p)
 		return 0;

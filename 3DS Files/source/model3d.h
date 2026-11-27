@@ -793,6 +793,9 @@ extern int g_dbgNoPassSkip;
 extern int g_dbgNoGlossEnv;
 // The look sweep's carsplit step (#431): DbgNoGlossEnv for its window.
 extern bool g_sweepGlossEnvSplit;
+// #553: the gloss + reflection pass's weight ramp as RGBA8 again (the tour's
+// "rampold"); LA8 otherwise.
+extern volatile bool g_geRampRgba8;
 // DbgTevKeep (#352, off since #350): 0 every texture change rebuilds the TEV
 // stage; 1 only unit 0 is rebound while the plain stage stays; 2 as 1 with
 // stage 0 re-emitted.

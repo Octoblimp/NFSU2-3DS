@@ -210,6 +210,28 @@ static float pidIntegral(const AiPidError* p) {
 	return p->integ.sum * (float)p->integ.count / den;
 }
 
+// PORT (TASKS.md #550): the derivative a racer steers on, averaged over the
+// time retail's five samples cover. Retail records a PidError once a 60 Hz
+// frame, so its Average of five spans 1/12 s; the port records once a drawn
+// frame (20..30 a second on the New 3DS), where five span 0.17..0.25 s. That
+// lag on the steering's damping rocked every racer side to side on a straight
+// (the sim's straights: yaw 12.6 deg/s rms, 3 swings a second). The newest
+// samples that fit AI_DERIV_SEC are averaged instead, at least one.
+#define AI_DERIV_SEC (5.0f / 60.0f)
+static float pidDerivRecent(const AiPidError* p, float dt) {
+	const AiAverage* a = &p->deriv;
+	if (a->count == 0) return 0.0f;
+	int n = dt > 0.0f ? (int)(AI_DERIV_SEC / dt + 0.5f) : a->count;
+	if (n < 1) n = 1;
+	if (n > a->count) n = a->count;
+	float sum = 0.0f;
+	for (int i = 0, j = a->idx; i < n; i++) {
+		j = j > 0 ? j - 1 : a->cap - 1;
+		sum += a->d[j];
+	}
+	return sum / (float)n;
+}
+
 // ---------------------------------------------------------------------------
 // AdaptivePIDControllerBase / Complicated: the circuit and sprint steering.
 // Adaptation rule 0 is the only one PsychoDriver asks for, so it is the only
@@ -684,7 +706,7 @@ void aidriver_drive(AiDriver* d, const CarSim* s, float dt, CarSimInput* out) {
 		}
 
 		P = wH * e1 + wB * e2;
-		float D = clampf(wH * d->heading.deriv.avg + wB * d->blended.deriv.avg,
+		float D = clampf(wH * pidDerivRecent(&d->heading, dt) + wB * pidDerivRecent(&d->blended, dt),
 			-1.0f, 1.0f);
 		float I = clampf(wH * pidIntegral(&d->heading) + wB * pidIntegral(&d->blended),
 			-AI_STEER_INTEGRAL_CLAMP, AI_STEER_INTEGRAL_CLAMP);
